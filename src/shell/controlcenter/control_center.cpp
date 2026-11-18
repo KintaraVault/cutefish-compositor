@@ -28,6 +28,7 @@
 #include "ui/popup_glass.h"
 #include "ui/theme.h"
 #include "ui/window.h"
+#include "wm/window.h"
 
 namespace cutefish::shell {
 using i18n::tr;
@@ -339,6 +340,7 @@ static ui::PopupPlacement placementAt(ShellWindow *bar, const base::Rect &geomet
     placement.flipX = false;
     placement.flipY = false;
     placement.slide = false;
+    placement.resize = false;
     return placement;
 }
 
@@ -395,7 +397,8 @@ void ControlCenter::open(Panel panel, ShellWindow *bar, const base::Rect &anchor
         m_layout.select(page);
         auto view = std::make_unique<ControlCenterView>(*m_services, m_layout, page,
                 screen.width() - 2 * int(panel::kPopupMargin),
-                std::max(150, area.bottom() - screen.y() - kBarHeight - 2 * int(panel::kPopupMargin)));
+                std::max(150, area.bottom() - screen.y() - kBarHeight - 2 * int(panel::kPopupMargin)),
+                screen.height() - kBarHeight - int(panel::kPopupMargin));
         open.controlCenter = view.get();
         view->state = [this](std::string_view type) { return state(type); };
         view->activate = [this](std::string_view type, bool detail) { activate(type, detail); };
@@ -500,6 +503,8 @@ void ControlCenter::updateWindow(Panel panel)
     }
     ui::Path shape;
     auto material = panel::panelGlass();
+    if (auto *managed = window->wmWindow(); managed && open.controlCenter)
+        managed->setPopupAboveDock(open.controlCenter->editing());
     if (open.pager && !open.pager->detailPage()) {
         shape = open.controlCenter->glassShape();
         material = popupGlass(1, 1, 1, .024);
@@ -511,6 +516,7 @@ void ControlCenter::updateWindow(Panel panel)
         material.depth = 10;
         material.displacement = 12;
         material.chroma = .015f;
+        material.lightAngle = 237;
         material.rim = .94f;
         material.backdropReflection = 1.f;
         material.lenses = open.controlCenter->glassLenses();

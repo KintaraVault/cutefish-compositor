@@ -36,6 +36,7 @@ enum class StackingLayer {
     Panel,
     Launchpad,
     Dock,
+    DockOverlay,
     Notification,
     Osd,
     Picker,

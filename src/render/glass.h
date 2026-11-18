@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <vector>
 
+#include <optional>
+
 #include "base/geometry.h"
 
 namespace cutefish::render {
@@ -19,6 +21,9 @@ struct GlassLens {
     double radius = 0;
     float tintAlpha = -1; // inherit the material tint when negative
     float opacity = 1;
+    // A lens inside a larger masked sheet needs its own rounded coverage and
+    // may be cut off by the sheet's scrolling viewport.
+    std::optional<base::RectF> viewport;
 
     bool operator==(const GlassLens &) const = default;
 };

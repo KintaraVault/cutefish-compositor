@@ -679,6 +679,15 @@ void Window::setPanelBehavior(PanelBehavior behavior)
         m_manager->onWindowStackingChanged(this);
 }
 
+void Window::setPopupAboveDock(bool above)
+{
+    if (!isPopup() || m_popupAboveDock == above)
+        return;
+    m_popupAboveDock = above;
+    if (m_manager)
+        m_manager->onWindowStackingChanged(this);
+}
+
 void Window::setClientPosition(const base::Point &position)
 {
     if (m_clientPosition == position && m_bounds.topLeft() == position)

@@ -367,6 +367,12 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     wallpaper->setGeometry(output);
     wallpaper->setFocusPolicy(wm::FocusPolicy::NoFocus);
     wallpaper->show();
+    auto previewDock = std::make_unique<shell::ShellWindow>(shell.get(), wm::WindowRole::Dock, false);
+    previewDock->setContentView(std::make_unique<ui::View>());
+    previewDock->window()->setBackgroundColor(ui::ColorRecipe(ui::Color::rgb(0xd2dbf0)));
+    previewDock->setGeometry({450, 1005, 1020, 63});
+    previewDock->setExclusiveZone(wm::ScreenEdge::Bottom, 90);
+    previewDock->setFocusPolicy(wm::FocusPolicy::NoFocus);
     auto *widgets = shell->addComponent(std::make_unique<shell::DesktopWidgets>(
             shell.get(), *center, directory.filePath("desktop-widgets.conf")));
 
@@ -380,6 +386,7 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     const auto cleanup = [&] {
         if (gpu->beginFrame(&target)) {
             wallpaper.reset();
+            previewDock.reset();
             center->closePanels();
             center = nullptr;
             bar.reset();
@@ -408,9 +415,12 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
                 gpu->drawTextureMapped(node->texture(), bounds, 1, {});
             };
             draw(wallpaper.get());
-            for (auto *window : shell->windows())
-                if (window != wallpaper.get())
-                    draw(window);
+            for (auto *mapped : manager.windows())
+                for (auto *window : shell->windows())
+                    if (window != wallpaper.get() && window->wmWindow() == mapped) {
+                        draw(window);
+                        break;
+                    }
         });
         gpu->cancelFrame();
         EXPECT_TRUE(image.savePng(std::string(prefix) + name + ".png"));
@@ -422,12 +432,13 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     capture("-warmup");
     test::runFor(std::chrono::milliseconds(260));
     capture("-live");
+    previewDock->show();
     const auto bounds = center->popupWindow(Panel::ControlCenter)->drawnBounds();
     press(bounds.center().x(), bounds.bottom() - 22);
     release();
     ASSERT_TRUE(center->controlCenterView()->editing());
     capture("-warmup");
-    test::runFor(std::chrono::milliseconds(280));
+    test::runFor(std::chrono::milliseconds(390));
     capture("-edit");
     center->closePanels();
     test::runFor(std::chrono::milliseconds(25));
@@ -1013,6 +1024,44 @@ TEST_F(ControlCenterTest, EditorAddsDragsCancelsAndRemovesControls)
     test::runFor(std::chrono::milliseconds(10));
     EXPECT_FALSE(view->editing());
     EXPECT_TRUE(center->isOpen(Panel::ControlCenter));
+}
+
+TEST_F(ControlCenterTest, ControlCatalogRisesOverTheDockAndReachesTheScreenEdge)
+{
+    shell::ShellWindow testDock(shell.get(), wm::WindowRole::Dock, false);
+    testDock.setContentView(std::make_unique<ui::View>());
+    testDock.setGeometry({400, kOutput.bottom() - kDock, 600, kDock});
+    testDock.show();
+    frames(std::chrono::milliseconds(35));
+    center->openPanel(Panel::ControlCenter, bar.get(), item(178));
+    frames(std::chrono::milliseconds(300));
+    auto *window = center->popupWindow(Panel::ControlCenter);
+    ASSERT_NE(nullptr, window->wmWindow());
+    EXPECT_LT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
+    const auto live = window->drawnBounds();
+    click(live.center().x(), live.bottom() - 24);
+    ASSERT_TRUE(center->controlCenterView()->editing());
+    const auto expanded = window->drawnBounds();
+    EXPECT_EQ(kOutput.bottom(), expanded.bottom());
+    EXPECT_GT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
+    EXPECT_FALSE(window->surface()->backgroundBlurShape().contains({30, 80}));
+    frames(std::chrono::milliseconds(130));
+    EXPECT_TRUE(window->surface()->backgroundBlurShape().contains({30, double(expanded.height() - 2)}));
+    EXPECT_FALSE(window->surface()->backgroundBlurShape().contains({30, 80}));
+    frames(std::chrono::milliseconds(260));
+    const auto &mask = window->surface()->backgroundBlurShape();
+    const auto &lenses = window->surface()->glass().lenses;
+    EXPECT_TRUE(std::ranges::any_of(lenses, [](const auto &lens) { return lens.viewport.has_value(); }));
+    EXPECT_TRUE(mask.contains({30, 80}));
+    EXPECT_TRUE(mask.contains({1, double(expanded.height() - 2)})); // no bottom corner above the dock
+    const auto overlap = expanded.intersected(testDock.geometry());
+    ASSERT_FALSE(overlap.isEmpty());
+    move(overlap.center().x(), overlap.center().y());
+    EXPECT_EQ(window->surface(), seat.pointerFocus());
+    key(KEY_ESC);
+    frames(std::chrono::milliseconds(40));
+    EXPECT_EQ(live.bottom(), window->drawnBounds().bottom());
+    EXPECT_LT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
 }
 
 TEST_F(ControlCenterTest, WidgetsCanBeAddedDraggedAndRemovedAndSurviveRestart)

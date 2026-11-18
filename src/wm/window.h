@@ -114,6 +114,8 @@ public:
     WindowRole role() const { return m_role; }
 
     void setRole(WindowRole role);
+    bool popupAboveDock() const { return m_popupAboveDock; }
+    void setPopupAboveDock(bool above);
 
     bool isShellWindow() const { return m_role != WindowRole::Normal; }
 
@@ -470,6 +472,7 @@ private:
     std::string m_applicationId;
     int64_t m_processId = 0;
     WindowRole m_role = WindowRole::Normal;
+    bool m_popupAboveDock = false;
     FocusPolicy m_focusPolicy = FocusPolicy::Normal;
     PanelBehavior m_panelBehavior = PanelBehavior::StayAbove;
     base::Point m_clientPosition;

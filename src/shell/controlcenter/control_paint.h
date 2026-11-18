@@ -62,6 +62,7 @@ inline void paragraph(ui::Painter &painter, const ui::RectF &rect, std::string t
         return;
     ui::TextLayout layout(std::move(text), {ui::Theme::current().fontFamily, size}, painter.scale());
     layout.setDefaultColor(ink);
+    layout.setWrap(ui::TextLayout::Wrap::WordOrAnywhere);
     layout.beginLayout();
     double y = 0;
     while (y < rect.height) {

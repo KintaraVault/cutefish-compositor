@@ -29,6 +29,7 @@ uniform sampler2D uShape;
 uniform float uHasShape;
 uniform vec4 uShapeRect;
 uniform float uOpacity;
+uniform float uNestedLens;
 
 float roundRect(vec2 p, vec2 halfSize, float r) {
     if (uBackdropReflection > 0.0) {
@@ -120,6 +121,15 @@ vec4 softBackdrop(vec2 position, vec2 uv, vec2 margin) {
     return vec4(color * (1.0 - dim), 1.0) * (horizontal * vertical * uOpacity);
 }
 
+// Approximate integration over the pixel's projection onto the edge normal.
+// At 45 degrees that footprint is wider than on the flats. A constant width
+// makes the crest grow teeth as the corners move at fractional scale.
+float rimBand(float distance, float start, float end, vec2 outward) {
+    float halfWidth = max(0.5, 0.5 * dot(abs(outward), vec2(1.0)));
+    return smoothstep(start - halfWidth, start + halfWidth, distance)
+         - smoothstep(end - halfWidth, end + halfWidth, distance);
+}
+
 vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
                   float sd, float band, vec2 margin) {
     float pixel = uRim.y;
@@ -129,28 +139,37 @@ vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
     // The lip reflects a small patch outside the outline. The footprint fans
     // out with the bevel slope; opposite sides can pick up different colours.
     float reach = max(d, 0.0) + band * mix(0.45, 1.15, length(normal.xy));
+    // Outside and inside the bevel have different footprints. In particular,
+    // a crossing bright window shouldn't paint the same highlight all around.
     vec2 ray = uv + tap * reach;
-    vec3 environment = 0.50 * backdrop(clamp(ray, margin, 1.0 - margin));
-    environment += 0.25 * backdrop(clamp(ray + tangent * band * 0.55, margin, 1.0 - margin));
-    environment += 0.25 * backdrop(clamp(ray - tangent * band * 0.55, margin, 1.0 - margin));
+    vec3 environment = 0.48 * backdrop(clamp(ray, margin, 1.0 - margin));
+    environment += 0.22 * backdrop(clamp(ray + tangent * band * 0.64, margin, 1.0 - margin));
+    environment += 0.22 * backdrop(clamp(ray - tangent * band * 0.64, margin, 1.0 - margin));
+    environment += 0.08 * backdrop(clamp(ray + tap * band * 1.2, margin, 1.0 - margin));
     vec3 local = backdrop(clamp(uv, margin, 1.0 - margin));
     float fresnel = pow(1.0 - clamp(normal.z, 0.0, 1.0), 2.0);
-    // Integrate the subpixel crest; the path separately masks the silhouette.
-    float crestStart = 0.18 * pixel;
-    float crestEnd = 1.57 * pixel;
-    float lip = clamp(min(d + 0.5, crestEnd) - max(d - 0.5, crestStart), 0.0, 1.0);
-    float shoulder = exp(-max(d - crestEnd, 0.0) / max(pixel, band * 0.32));
+    vec2 light = normalize(uLight.xy);
+    float incident = dot(outward, light);
+    float key = pow(max(incident, 0.0), 2.1);
+    float bounce = pow(max(-incident, 0.0), 1.75);
+    float crestStart = mix(0.48, 0.10, key) * pixel;
+    float crestEnd = crestStart + mix(0.82, 1.22, max(key, bounce)) * pixel;
+    float lip = rimBand(d, crestStart, crestEnd, outward);
+    float shoulder = smoothstep(crestStart - .5, crestEnd, d)
+                   * exp(-max(d - crestEnd, 0.0) / max(pixel, band * (0.25 + .18 * key)));
     float ambient = luminance(environment);
     float contrast = clamp(0.65 + 1.4 * (ambient - luminance(local)), 0.30, 1.0);
     float weight = uRim.x * uBackdropReflection;
     // Two broad incident lights sweep along the curvature. The backdrop
     // supplies the hue; neutral incident light prevents a black-level cutoff.
-    float key = 0.28 + 0.72 * pow(abs(dot(outward, normalize(uLight.xy))), 1.65);
     float bright = smoothstep(0.30, 0.9, ambient);
-    vec3 color = mix(transmission, environment, weight * (0.12 * lip + 0.25 * fresnel * shoulder));
-    vec3 caustic = sqrt(max(environment, vec3(0.0))) * 0.69 + (1.0 - bright) * 0.31;
-    color += caustic * (weight * contrast * (1.60 * key * lip + 0.105 * shoulder)) * (1.0 - color);
-    float silhouette = 1.0 - smoothstep(-0.25 * pixel, 0.62 * pixel, d);
+    vec3 color = mix(transmission, environment, weight * (0.09 * lip + 0.25 * fresnel * shoulder));
+    vec3 caustic = sqrt(max(environment, vec3(0.0))) * 0.64 + (1.0 - bright) * 0.36;
+    float reflectedLight = 0.66 + 1.20 * key + 0.93 * bounce;
+    float energy = weight * contrast * (reflectedLight * lip + (0.09 + .14 * key) * shoulder);
+    // Compress the brightest glints instead of clipping a channel at the rim.
+    color += (1.0 - exp(-caustic * energy)) * (1.0 - color);
+    float silhouette = 1.0 - smoothstep(-0.30 * pixel, 0.82 * pixel, d);
     return clamp(color * (1.0 - weight * silhouette * mix(0.13, 0.44, ambient)), 0.0, 1.0);
 }
 
@@ -260,5 +279,10 @@ void shade() {
     // curved, and a one pixel ramp off the distance field visibly stairsteps
     // where the outline next to it does not.
     float mask = mix(1.0, texture2D(uShape, uShapeRect.xy + vTexCoord * uShapeRect.zw).a, uHasShape);
+    if (uNestedLens > 0.0) {
+        vec2 n = outwardAt(insideLens(p, halfSize, r), halfSize, r);
+        float footprint = max(0.5, 0.5 * dot(abs(n), vec2(1.0)));
+        mask *= 1.0 - smoothstep(-footprint, footprint, sd);
+    }
     gl_FragColor = vec4(max(color, vec3(0.0)), 1.0) * mask * uOpacity;
 }

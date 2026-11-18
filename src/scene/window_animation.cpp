@@ -987,6 +987,8 @@ void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sampl
                     lens.bounds = {lens.bounds.x() * sx, lens.bounds.y() * sy,
                                    lens.bounds.width() * sx, lens.bounds.height() * sy};
                     lens.radius *= scale;
+                    if (auto &v = lens.viewport; v)
+                        *v = {v->x() * sx, v->y() * sy, v->width() * sx, v->height() * sy};
                 }
                 auto &underlay = glass.underlay.bounds;
                 underlay = {underlay.x() * sx, underlay.y() * sy,

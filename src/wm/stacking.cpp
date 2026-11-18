@@ -47,6 +47,8 @@ StackingLayer layerFor(const Window *window)
         return layerFor(window->transientParent());
     if (window->isPopup() && window->transientParent()) {
         const StackingLayer parentLayer = layerFor(window->transientParent());
+        if (window->popupAboveDock() && parentLayer < StackingLayer::DockOverlay)
+            return StackingLayer::DockOverlay;
         return parentLayer == StackingLayer::Desktop || parentLayer == StackingLayer::DesktopWidget
                 ? StackingLayer::DesktopPopup : parentLayer;
     }

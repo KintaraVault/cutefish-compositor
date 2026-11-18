@@ -39,7 +39,7 @@ public:
     };
 
     ControlCenterView(ControlCenterServices &services, controls::Layout &model, int page,
-                      int maximumWidth, int maximumHeight);
+                      int maximumWidth, int maximumHeight, int editorHeight);
     ~ControlCenterView() override;
 
     // Reads the services again.
@@ -113,6 +113,7 @@ private:
     int m_page;
     int m_maximumWidth;
     int m_maximumHeight;
+    int m_editorHeight;
     ui::View *m_grid;
     DeviceUsersTile *m_users;
     Chrome *m_chrome;
