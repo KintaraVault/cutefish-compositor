@@ -9,6 +9,7 @@
 #include "shell/shell_data.h"
 #include "shell/menubar/battery.h"
 #include "ui/painter.h"
+#include "ui/icon.h"
 #include "ui/cell_layout.h"
 #include "ui/window.h"
 
@@ -71,18 +72,29 @@ StatusIcon::StatusIcon(BarContext *bar)
 
 void StatusIcon::setIconName(std::string name)
 {
-    if (name == m_iconName && m_glyph.empty())
+    if (name == m_iconName && m_glyph.empty() && m_themeIcon.empty())
         return;
     m_iconName = std::move(name);
     m_glyph.clear();
+    m_themeIcon.clear();
     updateIcon();
 }
 
 void StatusIcon::setGlyph(std::string name)
 {
-    if (name == m_glyph)
+    if (name == m_glyph && m_themeIcon.empty())
         return;
     m_glyph = std::move(name);
+    m_themeIcon.clear();
+    updateIcon();
+}
+
+void StatusIcon::setThemeIcon(std::string name)
+{
+    if (name == m_themeIcon)
+        return;
+    m_themeIcon = std::move(name);
+    m_glyph.clear();
     updateIcon();
 }
 
@@ -158,7 +170,16 @@ void StatusIcon::updateContent()
 
 void StatusIcon::updateIcon()
 {
-    if (!m_glyph.empty()) {
+    if (!m_themeIcon.empty()) {
+        std::string path = ui::themeIconPath(m_themeIcon, int(BarContext::kIconSize));
+        if (path.empty() && (m_themeIcon == "dark-mode" || m_themeIcon == "brightness"
+                || m_themeIcon == "camera" || m_themeIcon == "microphone" || m_themeIcon == "do-not-disturb"))
+            path = shellDataFile("controlcenter/light/" + m_themeIcon + ".svg");
+        if (path.empty())
+            m_icon->setGlyph("cc-grid");
+        else
+            m_icon->setSource(std::move(path), true);
+    } else if (!m_glyph.empty()) {
         m_icon->setGlyph(m_glyph);
     } else {
         const char *variant = bar()->lightContents() ? "menubar/dark/" : "menubar/light/";

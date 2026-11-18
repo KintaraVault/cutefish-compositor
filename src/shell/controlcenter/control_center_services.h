@@ -139,6 +139,9 @@ public:
     virtual void setCameraEnabled(bool enabled) = 0;
     virtual bool microphoneEnabled() const = 0;
     virtual void setMicrophoneEnabled(bool enabled) = 0;
+    virtual bool nightLightAvailable() const { return false; }
+    virtual bool nightLightEnabled() const { return false; }
+    virtual void setNightLightEnabled(bool) {}
     virtual std::vector<DeviceUser> deviceUsers() const = 0;
 
     // --- Media (MPRIS) ---

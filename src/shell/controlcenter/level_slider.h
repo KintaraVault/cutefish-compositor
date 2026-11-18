@@ -81,6 +81,7 @@ class TileSlider : public ui::View
 {
 public:
     explicit TileSlider(std::string title);
+    void setControlStyle(bool controlStyle) { m_controlStyle = controlStyle; }
 
     LevelSlider *slider() const { return m_slider; }
     void setTitle(std::string title);
@@ -108,6 +109,7 @@ private:
     LevelSlider *m_slider;
     bool m_hasDetail = false;
     bool m_detailPressed = false;
+    bool m_controlStyle = false;
 };
 
 // FishUI.Dpi's snap(): onto the device pixel grid of `scale`.

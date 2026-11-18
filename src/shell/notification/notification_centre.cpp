@@ -4,6 +4,8 @@
 
 #include "shell/notification/notification_centre.h"
 
+#include "ui/button.h"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -434,7 +436,10 @@ protected:
                             std::max(0.0, clearX - theme.largeSpacing - kInset), size.height});
 
         const double listTop = top + kHeaderHeight + theme.largeSpacing;
-        const ui::RectF list {0, listTop, width, std::max(0.0, geometry().height - listTop)};
+        const bool widgets = m_centre->m_widgets != nullptr;
+        const ui::RectF list {0, listTop, width, std::max(0.0, geometry().height - listTop - (widgets ? 52 : 0))};
+        if (widgets)
+            m_centre->m_widgets->setGeometry({(width - 136) / 2, geometry().height - 44, 136, 32});
         m_centre->m_scroll->setGeometry(list);
 
         ui::Label *empty = m_centre->m_empty;
@@ -623,6 +628,7 @@ void NotificationCentre::destroyWindow()
     m_scroll = nullptr;
     m_list = nullptr;
     m_empty = nullptr;
+    m_widgets = nullptr;
     m_window.reset();
     m_parent = nullptr;
 }
@@ -654,6 +660,13 @@ void NotificationCentre::build(const Placement &placement)
     m_list = m_scroll->setContent<List>(this, window);
     m_empty = content->addChild<ui::Label>(tr("No Notifications"));
     m_empty->setElide(ui::Label::Elide::None);
+    if (onEditWidgets) {
+        m_widgets = content->addChild<ui::Button>(tr("Edit Widgets"));
+        m_widgets->onClicked = [this] {
+            close();
+            onEditWidgets();
+        };
+    }
     m_window->setContentView(std::move(content));
     m_window->resize({double(m_geometry.width()), double(m_geometry.height())});
 

@@ -21,6 +21,7 @@
 #include "ui/window.h"
 
 namespace cutefish::ui {
+class Button;
 class Label;
 class ScrollView;
 } // namespace cutefish::ui
@@ -93,6 +94,7 @@ public:
 
     // The layout pass, for tests: rows and headers move to their targets.
     void relayout();
+    std::function<void()> onEditWidgets;
 
 private:
     class Content;
@@ -145,6 +147,7 @@ private:
     ui::ScrollView *m_scroll = nullptr;
     List *m_list = nullptr;
     ui::Label *m_empty = nullptr;
+    ui::Button *m_widgets = nullptr;
 
     std::vector<Row *> m_rows;
     std::vector<GroupHeader *> m_headers;

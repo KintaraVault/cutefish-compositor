@@ -64,14 +64,18 @@
 #include "shell/controlcenter/control_center.h"
 #include "shell/dock/dock.h"
 #include "shell/dock/dock_window.h"
+#include "shell/common/app_launcher.h"
+#include "shell/common/applications.h"
 #include "shell/notresponding/not_responding_sheets.h"
 #include "shell/notification/notification_ui.h"
+#include "shell/notification/notification_centre.h"
 #include "shell/notification/notifications.h"
 #include "shell/spotlight/spotlight.h"
 #include "shell/menubar/app_menus_view.h"
 #include "shell/osd/osd.h"
 #include "shell/screenshot/screen_capture.h"
 #include "shell/screenshot/screen_grabber.h"
+#include "shell/widgets/desktop_widgets.h"
 #include "shell/secrets/secret_prompts.h"
 #include "shell/shell.h"
 #include "shell/shell_window.h"
@@ -105,6 +109,7 @@
 #include "wm/gestures/wm_gesture_handler.h"
 #include "wm/mru_window_tracker.h"
 #include "wm/overview/overview_controller.h"
+#include "wm/show_desktop_controller.h"
 #include "wm/quit_all.h"
 #include "wm/activation.h"
 #include "wm/toplevel_event_handler.h"
@@ -844,6 +849,41 @@ void CompositorShell::initShell()
             [bar, screenshot] { bar->setRecording(screenshot->isRecording()); }));
     auto *controlCenter = m_shell->addComponent(
             shell::ControlCenter::create(m_shell.get(), bar->menuBar(), &notifications->notifications().settings()));
+    auto *widgets = m_shell->addComponent(std::make_unique<shell::DesktopWidgets>(m_shell.get(), *controlCenter));
+    const auto editWidgets = [this, widgets] {
+        if (auto *desktop = m_windowManager.showDesktop(); desktop && !desktop->isActive())
+            desktop->toggle();
+        widgets->edit();
+    };
+    notifications->centre().onEditWidgets = editWidgets;
+    controlCenter->setAction("clock", editWidgets);
+    controlCenter->setAction("widgets", editWidgets);
+    controlCenter->setAction("screenshot", [screenshot] { screenshot->takePartialScreenshot(false); });
+    controlCenter->setAction("record", [screenshot] {
+        if (screenshot->isRecording()) {
+            screenshot->stopRecording();
+        } else {
+            screenshot->startCaptureMode();
+            if (screenshot->isActive())
+                screenshot->setMode(shell::ScreenCapture::Video, screenshot->source());
+        }
+    }, [screenshot] { return screenshot->isRecording(); });
+    if (auto *desktop = m_windowManager.showDesktop())
+        controlCenter->setAction("desktop", [desktop] { desktop->toggle(); }, [desktop] { return desktop->isActive(); });
+    if (auto *overview = m_windowManager.overview())
+        controlCenter->setAction("overview", [overview] { overview->toggle(); });
+    auto &dockSettings = dockWindow->dock().settings();
+    controlCenter->setAction("dock", [&dockSettings] {
+        dockSettings.setVisibility(dockSettings.visibility() == shell::DockSettings::AlwaysShow
+                                           ? shell::DockSettings::AlwaysHide : shell::DockSettings::AlwaysShow);
+    }, [&dockSettings] { return dockSettings.visibility() != shell::DockSettings::AlwaysShow; });
+    for (const auto &[control, id] : {std::pair {"calculator", "cutefish-calculator.desktop"},
+                                     {"note", "cutefish-text-editor.desktop"}}) {
+        const auto &apps = m_shell->applications().applications();
+        const auto app = std::ranges::find_if(apps, [id](const auto &entry) { return entry->id == id; });
+        if (app != apps.end())
+            controlCenter->setAction(control, [this, entry = *app] { m_shell->launcher().launch(*entry); });
+    }
     bar->addPanels(controlCenter);
     bar->setIndicators(controlCenter);
     m_shellSubscriptions.push_back(controlCenter->vpnFailed.connect(

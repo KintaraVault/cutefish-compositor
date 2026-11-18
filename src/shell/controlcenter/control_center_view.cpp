@@ -1,385 +1,1009 @@
-// Copyright 2026 Reion Wong <reionwong@gmail.com>
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-
+// SPDX-License-Identifier: BSD-3-Clause
 #include "shell/controlcenter/control_center_view.h"
 
 #include <cmath>
-#include <vector>
+#include <ranges>
 
 #include "base/i18n.h"
-#include "shell/controlcenter/control_center_services.h"
+#include "shell/controlcenter/control_paint.h"
 #include "shell/controlcenter/level_slider.h"
 #include "shell/controlcenter/panel_style.h"
-#include "shell/controlcenter/status_panel.h"
 #include "shell/controlcenter/tiles.h"
 #include "ui/animation.h"
-#include "ui/theme.h"
-#include "ui/window.h"
-
-using cutefish::i18n::tr;
+#include "ui/geometry_conversions.h"
+#include "ui/menu.h"
+#include "ui/search_field.h"
+#include "ui/keys.h"
 
 namespace cutefish::shell {
+namespace {
+using namespace control_paint;
+using controls::Size;
+using controls::Tile;
+using i18n::tr;
+using namespace std::chrono_literals;
 
-ControlCenterView::ControlCenterView(ControlCenterServices &services)
+constexpr double kInset = 6;
+constexpr double kCatalogGap = 28;
+constexpr double kFooter = 48;
+constexpr double kEditorHeader = 52;
+constexpr ui::Color kGreen {42, 157, 75, 255};
+
+double radius(const ui::RectF &rect) { return rect.width == rect.height && rect.width < 105 ? rect.height / 2 : 25; }
+
+std::string folded(const std::string &text)
+{
+    std::string result = text;
+    for (char &ch : result)
+        if (ch >= 'A' && ch <= 'Z')
+            ch += 'a' - 'A';
+    return result;
+}
+
+ui::RectF centered(ui::RectF rect, double size)
+{
+    return {rect.x + (rect.width - size) / 2, rect.y + (rect.height - size) / 2, size, size};
+}
+
+std::string artworkFor(std::string_view type, bool white)
+{
+    if (type == "wifi")
+        return {};
+    if (type == "bluetooth" || type == "dark" || type == "focus" || type == "camera"
+        || type == "microphone" || type == "media" || type == "sound" || type == "display") {
+        return panel::artwork(controls::find(type)->icon, white);
+    }
+    return {};
+}
+
+void glyph(ui::Painter &painter, const controls::Definition &def, ui::RectF rect, ui::Color ink)
+{
+    if (std::string file = artworkFor(def.id, false); !file.empty()) {
+        painter.drawSvg(file, rect, ink);
+    } else if (std::string file = ui::themeIconPath(def.icon, 24, painter.scale()); file.ends_with(".svg")) {
+        painter.drawSvg(file, rect, ink);
+    } else {
+        // Some icon themes ship only raster artwork or omit optional glyphs.
+        const std::string title = tr(def.title);
+        size_t end = 1;
+        while (end < title.size() && (static_cast<unsigned char>(title[end]) & 0xc0) == 0x80)
+            ++end;
+        text(painter, rect, title.substr(0, end), 13, ink, true, true);
+    }
+}
+
+void preview(ui::Painter &painter, const controls::Definition &def, Size size, const ui::RectF &r,
+             bool dragging = false)
+{
+    const auto ink = panel::textColor();
+    const auto fill = panel::dark() ? ui::Color {55, 55, 58, 230} : ui::Color {255, 255, 255, 218};
+    if (dragging)
+        painter.drawShadow(r, radius(r), 12, ui::Color {0, 0, 0, 100}, {0, 6});
+    painter.fillRoundedRect(r, radius(r), fill);
+    if (def.id == "media" && size == Size::Large) {
+        painter.fillRoundedRect({r.x + 12, r.y + 12, 36, 36}, 8, panel::textColor(.13));
+        text(painter, {r.x + 13, r.bottom() - 64, r.width - 26, 20}, tr("Not Playing"), 9, ink, true);
+        text(painter, {r.x, r.bottom() - 39, r.width, 27}, "⏮    ▶    ⏭", 13, ink, true, true);
+    } else if (size == Size::Small) {
+        glyph(painter, def, centered(r, 25), ink);
+    } else if (size == Size::Wide) {
+        text(painter, {r.x + 15, r.y + 8, r.width - 30, 24}, tr(def.title), 10, ink, true);
+        const ui::RectF track {r.x + 14, r.y + r.height / 2, r.width - 28, 18};
+        painter.fillRoundedRect(track, 9, panel::textColor(0.12));
+        painter.fillRoundedRect({track.x, track.y, track.width * .53, track.height}, 9, panel::textColor(.65));
+    } else {
+        const bool large = size == Size::Large;
+        const ui::RectF plate {r.x + 12, large ? r.y + 13 : center(r).y - 17, 34, 34};
+        painter.fillRoundedRect(plate, 17, panel::textColor(.09));
+        glyph(painter, def, centered(plate, 20), ink);
+        const double x = large ? r.x + 13 : r.x + 52;
+        text(painter, {x, large ? r.bottom() - 44 : r.y, r.right() - x - 9, large ? 34.0 : r.height},
+             tr(def.title), 10, ink, true);
+    }
+}
+
+void pageGlyph(ui::Painter &painter, int icon, ui::RectF rect, ui::Color ink)
+{
+    const auto c = center(rect);
+    if (icon == 0) {
+        for (int x : {-4, 4})
+            for (int y : {-4, 4})
+                painter.fillRoundedRect({c.x + x - 2.5, c.y + y - 2.5, 5, 5}, 2.5, ink);
+    } else {
+        static const char *symbols[] = {"", "♫", "⌂", "★", "◎"};
+        text(painter, rect, symbols[icon], 15, ink, true, true);
+    }
+}
+} // namespace
+
+class ControlCenterView::Chrome final : public ui::View
+{
+public:
+    explicit Chrome(ControlCenterView &owner) : v(owner)
+    {
+        setTracksHover(true);
+        search = addChild<ui::SearchField>(tr("Search Controls"));
+        search->setName("control-search");
+        search->setVisible(false);
+        search->onTextChanged = [this] { galleryScroll = 0; focusedPreview = 0; requestPaint(); };
+    }
+
+    bool editing = false;
+    ui::SearchField *search;
+    std::unique_ptr<ui::Menu> menu;
+    std::optional<Tile> held;
+    bool dragging = false;
+    double galleryScroll = 0;
+    double sidebarScroll = 0;
+    double galleryHeight = 0;
+    double sidebarHeight = 0;
+    size_t focusedPreview = 0;
+    std::string category;
+
+    void cancelDrag()
+    {
+        held.reset();
+        dragging = false;
+        target.reset();
+        v.requestLayout();
+        requestPaint();
+    }
+
+protected:
+    static bool contains(const ui::RectF &r, ui::PointF p) { return control_paint::contains(r, p); }
+    bool acceptsPointer() const override { return true; }
+    bool acceptsFocus() const override { return editing; }
+    void layout() override
+    {
+        const auto r = v.catalogRect();
+        search->setVisible(editing);
+        if (editing) {
+            search->setGeometry({r.x + 14, r.y + 16, sidebarWidth() - 28, 34});
+            search->setOpacity(v.m_catalogReveal);
+        }
+    }
+
+    void paint(ui::Painter &painter) override
+    {
+        const auto ink = panel::textColor();
+        const auto footer = editing ? v.editRect() : localRect();
+        if (!editing) {
+            if (contains(footer, hover))
+                painter.fillRoundedRect(footer, footer.height / 2, panel::textColor(.10));
+            text(painter, footer, tr("Edit Controls"), 9.5, ink, true, true);
+            return;
+        }
+
+        painter.save();
+        painter.clip(v.gridClip());
+        for (int y = 0; y < v.rows(); ++y) {
+            for (int x = 0; x < controls::Layout::kColumns; ++x) {
+                if (std::ranges::any_of(v.page().tiles, [&](const Tile &tile) {
+                        return tile.bounds().contains(base::Point(x, y));
+                    }))
+                    continue;
+                const auto rect = v.tileRect(Size::Small, {x, y});
+                painter.fillRoundedRect(rect, rect.height / 2, panel::textColor(.10));
+                painter.strokeRoundedRect(inset(rect, .7), rect.height / 2, panel::textColor(.18));
+            }
+        }
+        for (const Tile &tile : v.page().tiles) {
+            if (dragging && held && held->id == tile.id)
+                continue;
+            const auto minus = minusRect(tile);
+            const ui::Color background = panel::dark() ? ui::Color::rgb(0x525256) : ui::Color::rgb(0xDDDEE1);
+            sign(painter, minus, false, contains(minus, hover) ? panel::shade(background, .12) : background, ink);
+        }
+        if (target && held) {
+            const auto r = v.tileRect(held->size, *target);
+            const auto accent = ui::Theme::current().highlight;
+            painter.fillRoundedRect(r, radius(r), accent.withAlpha(.22));
+            painter.strokeRoundedRect(inset(r, 1), radius(r), accent, 2);
+        }
+        painter.restore();
+
+        for (size_t i = 0; i < controls::pageIcons().size(); ++i) {
+            const auto r = iconRect(i);
+            const bool checked = v.page().icon == controls::pageIcons()[i];
+            if (checked || contains(r, hover))
+                painter.fillRoundedRect(r, 17, panel::textColor(checked ? .16 : .07));
+            pageGlyph(painter, int(i), r, ink);
+        }
+        if (v.m_model.pages().size() > 1) {
+            for (size_t i = 0; i < v.m_model.pages().size(); ++i) {
+                const auto r = pageRect(i);
+                const bool selected = v.m_model.pages()[i].id == v.m_page;
+                painter.fillRoundedRect(r, 11, panel::textColor(selected ? .23 : .08));
+                text(painter, r, std::to_string(i + 1), 8, ink, selected, true);
+            }
+        }
+        painter.fillRoundedRect(footer, footer.height / 2, panel::textColor(.11));
+        text(painter, footer, tr("Done"), 9.5, ink, true, true);
+        paintGallery(painter);
+
+        if (dragging && held) {
+            const auto r = v.tileRect(held->size, {});
+            preview(painter, *controls::find(held->type), held->size,
+                    {hover.x - anchor.x, hover.y - anchor.y, r.width, r.height}, true);
+        }
+    }
+
+    void hoverMove(const ui::PointerEvent &event) override { hover = event.position; requestPaint(); }
+    void pointerLeave() override
+    {
+        if (!dragging) {
+            hover = {-1, -1};
+            requestPaint();
+        }
+    }
+
+    void pointerPress(const ui::PointerEvent &event) override
+    {
+        hover = origin = event.position;
+        if (!editing)
+            return;
+        if (event.button == ui::MouseButton::Right) {
+            if (const Tile *tile = tileAt(hover)) {
+                showMenu(*tile);
+            } else if (v.m_page && contains({v.canvasX(), 0, v.canvasWidth(), kEditorHeader}, hover)) {
+                menu = std::make_unique<ui::Menu>();
+                menu->addItem(tr("Remove Page"), [this] {
+                    v.m_model.removePage(v.m_page);
+                    v.selectPage(0);
+                });
+                menu->popupAt(window(), mapToWindow(hover));
+            }
+            return;
+        }
+        if (event.button != ui::MouseButton::Left)
+            return;
+        setFocus();
+        if (const Tile *tile = tileAt(hover)) {
+            held = *tile;
+            const auto rect = v.tileRect(tile->size, tile->cell);
+            anchor = {hover.x - rect.x, hover.y - rect.y};
+        } else if (const auto *item = previewAt(hover)) {
+            held = Tile {0, item->def->id, item->size, {}};
+            const auto rect = v.tileRect(held->size, {});
+            anchor = {rect.width / 2, rect.height / 2};
+        }
+    }
+
+    void pointerMove(const ui::PointerEvent &event) override
+    {
+        hover = event.position;
+        if (held && !dragging && std::hypot(hover.x - origin.x, hover.y - origin.y) >= 5) {
+            dragging = true;
+            v.requestLayout();
+        }
+        if (dragging && held) {
+            target.reset();
+            if (contains(v.gridClip(), hover)) {
+                const double step = v.cell() + v.gap();
+                const auto size = controls::footprint(held->size);
+                const int x = int(std::lround((hover.x - anchor.x - v.canvasX() - kInset) / step));
+                const int y = int(std::lround((hover.y - anchor.y - v.gridTop() + v.m_scroll) / step));
+                target = base::Point(std::clamp(x, 0, controls::Layout::kColumns - size.width()),
+                                     std::clamp(y, 0, controls::Layout::kRows - size.height()));
+            }
+        }
+        requestPaint();
+    }
+
+    void pointerRelease(const ui::PointerEvent &event) override
+    {
+        if (event.button != ui::MouseButton::Left)
+            return;
+        hover = event.position;
+        if (dragging && held) {
+            if (target && contains(v.gridClip(), hover)) {
+                if (held->id ? v.m_model.move(v.m_page, held->id, *target)
+                             : v.m_model.add(v.m_page, held->type, *target)) {
+                    v.changed();
+                }
+            }
+            cancelDrag();
+            return;
+        }
+        const auto footer = editing ? v.editRect() : localRect();
+        if (contains(footer, hover) && contains(footer, origin)) {
+            v.edit(!editing);
+        } else if (editing) {
+            if (held && held->id && contains(minusRect(*held), hover) && contains(minusRect(*held), origin)) {
+                if (v.m_model.remove(v.m_page, held->id))
+                    v.changed();
+            } else if (held && !held->id) {
+                if (const auto *item = previewAt(hover); item && item->def->id == held->type)
+                    addPreview(*item);
+            } else {
+                for (const auto &[name, r] : categories)
+                    if (contains(r, hover) && contains(sidebarClip(), hover)) {
+                        category = name;
+                        search->setText({});
+                        galleryScroll = 0;
+                        focusedPreview = 0;
+                        break;
+                    }
+                for (size_t i = 0; i < controls::pageIcons().size(); ++i)
+                    if (contains(iconRect(i), hover) && v.m_model.setIcon(v.m_page, controls::pageIcons()[i]))
+                        v.changed(false);
+                if (v.m_model.pages().size() > 1)
+                    for (size_t i = 0; i < v.m_model.pages().size(); ++i)
+                        if (contains(pageRect(i), hover)) {
+                            v.selectPage(v.m_model.pages()[i].id);
+                            break;
+                        }
+            }
+        }
+        cancelDrag();
+    }
+
+    bool scroll(const ui::ScrollEvent &event) override
+    {
+        if (editing && contains(v.catalogRect(), hover)) {
+            if (contains(sidebarClip(), hover)) {
+                sidebarScroll = std::clamp(sidebarScroll + event.deltaY, 0.0,
+                                           std::max(0.0, sidebarHeight - sidebarClip().height));
+            } else {
+                galleryScroll = std::clamp(galleryScroll + event.deltaY, 0.0,
+                                           std::max(0.0, galleryHeight - galleryClip().height));
+            }
+            requestPaint();
+            return true;
+        }
+        return v.scroll(event);
+    }
+
+    bool keyPress(const ui::KeyEvent &event) override
+    {
+        if (!editing || previews.empty())
+            return false;
+        if (event.key == ui::key::Down || event.key == ui::key::Up) {
+            const int step = event.key == ui::key::Down ? 1 : -1;
+            focusedPreview = size_t(std::clamp(int(focusedPreview) + step, 0, int(previews.size() - 1)));
+            const auto r = previews[focusedPreview].rect;
+            const auto clip = galleryClip();
+            galleryScroll += r.y < clip.y ? r.y - clip.y : std::max(0.0, r.bottom() + 25 - clip.bottom());
+            galleryScroll = std::clamp(galleryScroll, 0.0, std::max(0.0, galleryHeight - clip.height));
+            requestPaint();
+            return true;
+        }
+        if (event.key == ui::key::Return) {
+            addPreview(previews[std::min(focusedPreview, previews.size() - 1)]);
+            return true;
+        }
+        return false;
+    }
+
+private:
+    struct Preview { const controls::Definition *def; Size size; ui::RectF rect; };
+
+    double sidebarWidth() const { return std::clamp(v.catalogWidth() * .29, 118.0, 258.0); }
+    ui::RectF sidebarClip() const
+    {
+        const auto r = v.catalogRect();
+        return {r.x + 8, r.y + 59, sidebarWidth() - 16, std::max(0.0, r.height - 67)};
+    }
+    ui::RectF galleryClip() const
+    {
+        const auto r = v.catalogRect();
+        return {r.x + sidebarWidth() + 1, r.y + 12, r.width - sidebarWidth() - 9, r.height - 24};
+    }
+    ui::RectF iconRect(size_t i) const
+    {
+        return {v.canvasX() + (v.canvasWidth() - 5 * 42) / 2 + 42 * i, 5, 38, 34};
+    }
+    ui::RectF pageRect(size_t i) const
+    {
+        return {v.canvasX() + 9 + 27 * i, v.editRect().y + 5, 23, 23};
+    }
+    ui::RectF minusRect(const Tile &tile) const
+    {
+        const auto it = v.m_tiles.find(tile.id);
+        if (it == v.m_tiles.end())
+            return {};
+        auto r = v.tileRect(tile.size, tile.cell);
+        const auto pos = it->second->mapToWindow({0, 0});
+        const auto top = mapToWindow({0, 0});
+        return {pos.x - top.x + (r.width == r.height ? 5 : 0), pos.y - top.y + 1, 22, 22};
+    }
+    const Tile *tileAt(ui::PointF where) const
+    {
+        if (!contains(v.gridClip(), where))
+            return nullptr;
+        for (const auto &tile : v.page().tiles)
+            if (contains(v.tileRect(tile.size, tile.cell), where) || contains(minusRect(tile), where))
+                return &tile;
+        return nullptr;
+    }
+    const Preview *previewAt(ui::PointF where) const
+    {
+        if (!contains(galleryClip(), where))
+            return nullptr;
+        for (const auto &preview : previews) {
+            auto r = preview.rect;
+            r.height += 22;
+            if (contains(r, where))
+                return &preview;
+        }
+        return nullptr;
+    }
+
+    void addPreview(const Preview &item)
+    {
+        if (v.m_model.add(v.m_page, item.def->id))
+            v.changed();
+    }
+
+    void showMenu(const Tile &tile)
+    {
+        const auto *def = controls::find(tile.type);
+        const int id = tile.id;
+        menu = std::make_unique<ui::Menu>();
+        menu->setMinimumWidth(204);
+        menu->setItemEnabled(menu->addItem(tr("Size"), {}), false);
+        for (const auto &[label, size] : {std::pair {"Small", Size::Small}, {"Medium", Size::Medium},
+                                         {"Large", Size::Large}}) {
+            const auto index = menu->addItem(tr(label), [this, id, size] {
+                if (v.m_model.resize(v.m_page, id, size))
+                    v.changed();
+            });
+            menu->setItemEnabled(index, controls::supports(*def, size));
+            menu->setItemChecked(index, tile.size == size || (size == Size::Large && tile.size == Size::Wide));
+        }
+        menu->addSeparator();
+        auto pin = v.m_model.pin(def->id);
+        const auto setPin = [this, def](controls::Pin mode) {
+            v.m_model.setPin(def->id, mode);
+            v.changed(false);
+        };
+        if (def->pin == controls::PinStyle::Visibility) {
+            menu->setItemEnabled(menu->addItem(tr("Show in Menu Bar"), {}), false);
+            for (const auto &[label, mode] : {std::pair {"Always", controls::Pin::Always},
+                                             {"When Active", controls::Pin::Active}, {"Never", controls::Pin::Never}})
+                menu->setItemChecked(menu->addItem(tr(label), [setPin, mode] { setPin(mode); }), pin == mode);
+        } else {
+            const char *label = pin != controls::Pin::Never ? "Remove from Menu Bar"
+                    : def->pin == controls::PinStyle::Copy ? "Copy to Menu Bar" : "Add to Menu Bar";
+            menu->addItem(tr(label), [setPin, pin] {
+                setPin(pin == controls::Pin::Never ? controls::Pin::Always : controls::Pin::Never);
+            });
+        }
+        menu->addSeparator();
+        menu->addItem(tr("Remove Control"), [this, id] {
+            if (v.m_model.remove(v.m_page, id))
+                v.changed();
+        });
+        menu->popupAt(window(), mapToWindow(hover));
+    }
+
+    void paintGallery(ui::Painter &painter)
+    {
+        const auto r = v.catalogRect();
+        const auto ink = panel::textColor();
+        const auto soft = panel::textColor(.64);
+        painter.save();
+        painter.multiplyOpacity(v.m_catalogReveal);
+        painter.clipRoundedRect(r, 24);
+        painter.fillRect({r.x, r.y, sidebarWidth(), r.height}, panel::textColor(.045));
+        painter.fillRect({r.x + sidebarWidth(), r.y, 1, r.height}, panel::textColor(.12));
+
+        categories.clear();
+        previews.clear();
+        const auto side = sidebarClip();
+        painter.save();
+        painter.clip(side);
+        double y = side.y - sidebarScroll;
+        const auto categoryRow = [&](const std::string &name, size_t index) {
+            const ui::RectF row {side.x + 3, y, side.width - 6, 41};
+            categories.emplace_back(name, row);
+            const bool selected = search->text().empty() && name == category;
+            if (selected || (contains(row, hover) && contains(side, hover)))
+                painter.fillRoundedRect(row, 8, panel::textColor(selected ? .12 : .06));
+            static const int colors[] = {0x1685F7, 0x7657ED, 0xE75362, 0xF49E22, 0x57AF70, 0x6473ED};
+            const ui::RectF badge {row.x + 8, row.y + 8, 25, 25};
+            painter.fillRoundedRect(badge, 5, ui::Color::rgb(colors[index % 6]));
+            if (name.empty())
+                pageGlyph(painter, 0, badge, ui::Color::rgb(0xFFFFFF));
+            else if (const auto it = std::ranges::find_if(controls::catalog(), [&](const auto &def) {
+                         return name == def.category;
+                     }); it != controls::catalog().end())
+                glyph(painter, *it, centered(badge, 15), ui::Color::rgb(0xFFFFFF));
+            text(painter, {row.x + 43, row.y, row.width - 46, row.height}, name.empty() ? tr("All Controls") : tr(name.c_str()),
+                 9.5, ink, selected);
+            y += 43;
+        };
+        categoryRow({}, 0);
+        std::vector<std::string> groups;
+        for (const auto &def : controls::catalog()) {
+            if (std::ranges::find(groups, def.category) == groups.end()) {
+                groups.emplace_back(def.category);
+                categoryRow(groups.back(), groups.size());
+            }
+        }
+        sidebarHeight = y - side.y + sidebarScroll;
+        painter.restore();
+
+        const auto clip = galleryClip();
+        painter.save();
+        painter.clip(clip);
+        const double left = clip.x + 19;
+        const double width = std::max(52.0, clip.width - 36);
+        const double gap = 12;
+        const int columns = width >= 510 ? 6 : width >= 232 ? 4 : 2;
+        const double unit = std::min(79.0, (width - gap * (columns - 1)) / columns);
+        y = clip.y + 7 - galleryScroll;
+        const auto title = [&](std::string name, double size) {
+            text(painter, {left, y, width, 34}, std::move(name), size, ink, true);
+            y += 36;
+        };
+        const auto section = [&](const char *heading, const std::vector<const controls::Definition *> &items) {
+            if (items.empty())
+                return;
+            painter.fillRect({left, y, width, 1}, panel::textColor(.12));
+            title(tr(heading), 11);
+            double x = left;
+            double height = 0;
+            for (const auto *def : items) {
+                const auto footprint = controls::footprint(def->initial);
+                const double w = std::min(width, unit * footprint.width() + gap * (footprint.width() - 1));
+                const double h = unit * footprint.height() + gap * (footprint.height() - 1);
+                if (x > left && x + w > left + width) {
+                    y += height + 33;
+                    x = left;
+                    height = 0;
+                }
+                const ui::RectF rect {x, y, w, h};
+                previews.push_back({def, def->initial, rect});
+                if (rect.bottom() + 25 >= clip.y && rect.y < clip.bottom()) {
+                    preview(painter, *def, def->initial, rect);
+                    text(painter, {x - 4, y + h + 3, w + 8, 22}, tr(def->title), 9, ink, false, true);
+                    const bool selected = previews.size() - 1 == focusedPreview && hasFocus();
+                    if (selected || (contains(rect, hover) && contains(clip, hover)))
+                        sign(painter, {rect.x + 1, rect.y + 1, 23, 23}, true, kGreen, ui::Color::rgb(0xFFFFFF));
+                }
+                height = std::max(height, h);
+                x += w + gap;
+            }
+            y += height + 45;
+        };
+
+        const auto query = folded(search->text());
+        const auto matching = [&](auto predicate) {
+            std::vector<const controls::Definition *> result;
+            for (const auto &def : controls::catalog())
+                if (predicate(def))
+                    result.push_back(&def);
+            return result;
+        };
+        if (!query.empty()) {
+            const auto results = matching([&](const auto &def) {
+                return folded(tr(def.title)).find(query) != std::string::npos
+                        || folded(tr(def.category)).find(query) != std::string::npos;
+            });
+            if (results.empty())
+                title(tr("No Controls Found"), 14);
+            else
+                section("Search Results", results);
+        } else if (!category.empty()) {
+            section(category.c_str(), matching([&](const auto &def) { return category == def.category; }));
+        } else {
+            const bool artwork = width >= 370;
+            const double height = artwork ? 160 : 99;
+            const double copyWidth = artwork ? width * .52 - 32 : width - 32;
+            painter.fillRoundedRect({left, y, width, height}, 9, panel::textColor(.066));
+            text(painter, {left + 16, y + 13, copyWidth, 28}, tr("What’s New"), 14, ink, true);
+            text(painter, {left + 16, y + 44, copyWidth, 20}, tr("Make Control Center your own."), 9.5, ink);
+            text(painter, {left + 16, y + 65, copyWidth, 20}, tr("Resize, move, and pin controls."), 9, soft);
+            if (artwork) {
+                const ui::RectF screen {left + width * .52, y + 17, width * .48 - 16, height - 34};
+                painter.fillRoundedRect(screen, 7, panel::textColor(.09));
+                painter.fillRoundedRect({screen.x + 3, screen.y + 3, screen.width - 6, 8}, 3, panel::textColor(.17));
+                const double tile = std::min((screen.width - 22) / 11, 13.0);
+                const double x = screen.right() - tile * 4 - 12;
+                const double top = screen.y + 16;
+                const ui::RectF gallery {screen.x + 10, top + 14, x - screen.x - 16, screen.height - 41};
+                painter.fillRoundedRect(gallery, 5, panel::textColor(.17));
+                painter.fillRect({gallery.x + gallery.width * .29, gallery.y, 1, gallery.height}, panel::textColor(.20));
+                for (int row = 0; row < 6; ++row) {
+                    painter.fillRoundedRect({gallery.x + 4, gallery.y + 6 + row * 9., gallery.width * .20, 3}, 1.5,
+                                            panel::textColor(.24));
+                    for (int col = 0; col < 4; ++col) {
+                        const double unit = gallery.width * .15;
+                        painter.fillRoundedRect({gallery.x + gallery.width * .34 + col * unit,
+                                                 gallery.y + 6 + row * 9., unit - 3, 6}, 3, panel::textColor(.26));
+                    }
+                }
+                for (int row = 0; row < 7; ++row) {
+                    const int wide = row == 3 || row == 4 ? 4 : row < 2 ? 2 : 1;
+                    for (int col = 0; col < 4; col += wide)
+                        painter.fillRoundedRect({x + col * tile, top + row * 14., wide * tile - 3, 11}, 5, panel::textColor(.29));
+                }
+            }
+            y += height + 13;
+            section("Recommendations", matching([](const auto &def) { return def.recommended; }));
+            for (const auto &group : groups)
+                section(group.c_str(), matching([&](const auto &def) { return group == def.category; }));
+        }
+        galleryHeight = y - clip.y + galleryScroll;
+        painter.restore();
+        painter.restore();
+    }
+
+    ControlCenterView &v;
+    ui::PointF hover {-1, -1};
+    ui::PointF origin;
+    ui::PointF anchor;
+    std::optional<base::Point> target;
+    std::vector<Preview> previews;
+    std::vector<std::pair<std::string, ui::RectF>> categories;
+};
+
+ControlCenterView::ControlCenterView(ControlCenterServices &services, controls::Layout &model, int pageId,
+                                     int maximumWidth, int maximumHeight)
     : m_services(services)
+    , m_model(model)
+    , m_page(pageId)
+    , m_maximumWidth(maximumWidth)
+    , m_maximumHeight(maximumHeight)
 {
     m_users = addChild<DeviceUsersTile>();
-
-    m_wireless = addChild<CardItem>();
-    m_wireless->setGlyph("network-wireless-connected-100");
-    m_wireless->setTitle(tr("Wi-Fi"));
-    m_wireless->onClicked = [this] { m_services.enableWireless(!m_wireless->isChecked()); };
-    m_wireless->setHasDetail(true);
-    m_wireless->onDetail = [this] {
-        if (onWirelessDetail)
-            onWirelessDetail();
-    };
-
-    m_bluetooth = addChild<CardItem>();
-    m_bluetooth->setArtwork("bluetooth-symbolic");
-    m_bluetooth->setTitle(tr("Bluetooth"));
-    m_bluetooth->onClicked = [this] { m_services.setBluetoothEnabled(!m_services.bluetoothEnabled()); };
-    m_bluetooth->setHasDetail(true);
-    m_bluetooth->onDetail = [this] {
-        if (onBluetoothDetail)
-            onBluetoothDetail();
-    };
-
-    m_darkMode = addChild<CardItem>();
-    m_darkMode->setArtwork("dark-mode");
-    m_darkMode->setTitle(tr("Dark Mode"));
-    m_darkMode->onClicked = [this] { m_services.setDarkMode(!ui::Theme::current().darkMode); };
-
-    m_doNotDisturb = addChild<CardItem>();
-    m_doNotDisturb->setArtwork("do-not-disturb");
-    m_doNotDisturb->setTitle(tr("Do Not Disturb"));
-    m_doNotDisturb->onClicked = [this] { m_services.setDoNotDisturb(!m_services.doNotDisturb()); };
-
-    m_camera = addChild<CardItem>();
-    m_camera->setArtwork("camera");
-    m_camera->setTitle(tr("Camera"));
-    m_camera->onClicked = [this] { m_services.setCameraEnabled(!m_camera->isChecked()); };
-
-    m_microphone = addChild<CardItem>();
-    m_microphone->setArtwork("microphone");
-    m_microphone->setTitle(tr("Microphone"));
-    m_microphone->onClicked = [this] { m_services.setMicrophoneEnabled(!m_microphone->isChecked()); };
-
-    m_media = addChild<MediaTile>();
-    m_media->onPrevious = [this] { m_services.mediaPrevious(); };
-    m_media->onPlay = [this] { m_services.mediaPlay(); };
-    m_media->onPause = [this] { m_services.mediaPause(); };
-    m_media->onNext = [this] { m_services.mediaNext(); };
-
-    // TRANSLATORS: the title of the screen brightness slider.
-    m_brightness = addChild<TileSlider>(tr("Display"));
-    m_brightness->slider()->setRange(1, 100, 1);
-    m_brightness->slider()->setIcon(panel::artwork("brightness", false));
-    m_brightness->slider()->onMoved = [this](double value) {
-        m_services.setBrightness(int(std::lround(value)));
-    };
-
-    m_sound = addChild<TileSlider>(tr("Sound"));
-    m_sound->setHasDetail(true);
-    m_sound->onDetail = [this] {
-        if (onSoundDetail)
-            onSoundDetail();
-    };
-    m_sound->slider()->setRange(0, 1, 0.01);
-    m_sound->slider()->onMoved = [this](double value) {
-        if (!m_services.hasSink())
-            return;
-        m_services.setVolume(value);
-        m_services.setMuted(value == 0);
-    };
-
-    refresh();
+    m_grid = addChild<ui::View>();
+    m_grid->setClipsChildren(true);
+    m_chrome = addChild<Chrome>(*this);
+    rebuild();
 }
 
 ControlCenterView::~ControlCenterView() = default;
 
+const controls::Page &ControlCenterView::page() const { return *m_model.page(m_page); }
+
+bool ControlCenterView::editing() const { return m_chrome->editing; }
+
+double ControlCenterView::canvasWidth() const
+{
+    return std::min({kWidth, double(m_maximumWidth), std::max(208.0, (m_maximumHeight - 60) / 2.0)});
+}
+
+double ControlCenterView::catalogWidth() const
+{
+    return editing() ? std::clamp(m_maximumWidth - canvasWidth() - kCatalogGap, 0.0, 954.0) : 0;
+}
+
+double ControlCenterView::canvasX() const { return editing() ? catalogWidth() + kCatalogGap : 0; }
+double ControlCenterView::windowWidth() const { return canvasX() + canvasWidth(); }
+double ControlCenterView::gap() const { return std::round(canvasWidth() * .039); }
+double ControlCenterView::cell() const { return (canvasWidth() - 2 * kInset - 3 * gap()) / 4; }
+
+double ControlCenterView::gridTop() const
+{
+    return kInset + (editing() ? kEditorHeader : m_users->isVisible()
+                    ? m_users->heightForWidth(canvasWidth() - 2 * kInset) + gap() : 0);
+}
+
+int ControlCenterView::rows() const { return std::max(editing() ? 8 : 1, page().rows()); }
+double ControlCenterView::gridHeight() const { return rows() * (cell() + gap()) - gap(); }
+double ControlCenterView::gridViewport() const
+{
+    return std::max(cell(), std::min(gridHeight(), m_maximumHeight - gridTop() - kFooter));
+}
+
+double ControlCenterView::windowHeight(double) const
+{
+    return std::ceil(editing() ? m_maximumHeight : gridTop() + gridViewport() + kFooter);
+}
+
+ui::RectF ControlCenterView::gridClip() const { return {canvasX(), gridTop(), canvasWidth(), gridViewport()}; }
+
+ui::RectF ControlCenterView::tileRect(Size size, base::Point point) const
+{
+    const auto dim = controls::footprint(size);
+    const double step = cell() + gap();
+    return {canvasX() + kInset + point.x() * step, gridTop() + point.y() * step - m_scroll,
+            dim.width() * step - gap(), dim.height() * step - gap()};
+}
+
+ui::RectF ControlCenterView::catalogRect() const { return {kInset, 5, catalogWidth() - kInset, windowHeight(1) - 12}; }
+
+ui::RectF ControlCenterView::editRect() const
+{
+    const double width = editing() ? 68 : 118;
+    return {canvasX() + (editing() ? canvasWidth() - width - kInset : (canvasWidth() - width) / 2),
+            gridTop() + gridViewport() + 9, width, 31};
+}
+
+void ControlCenterView::rebuild(bool animate)
+{
+    if (m_transition)
+        m_transition->stop();
+    m_previous.clear();
+    if (animate)
+        for (const auto &[id, view] : m_tiles)
+            m_previous.emplace(id, view->geometry());
+
+    std::erase_if(m_tiles, [&](const auto &entry) {
+        if (page().tile(entry.first))
+            return false;
+        m_grid->takeChild(entry.second);
+        return true;
+    });
+    for (const auto &tile : page().tiles) {
+        if (m_tiles.contains(tile.id))
+            continue;
+        const std::string &type = tile.type;
+        ui::View *view;
+        if (type == "media") {
+            auto *media = m_grid->addChild<MediaTile>();
+            media->setControlStyle(true);
+            media->onPrevious = [this] { m_services.mediaPrevious(); };
+            media->onPlay = [this] { m_services.mediaPlay(); };
+            media->onPause = [this] { m_services.mediaPause(); };
+            media->onNext = [this] { m_services.mediaNext(); };
+            view = media;
+        } else if (type == "display" || type == "sound") {
+            const bool display = type == "display";
+            auto *tile = m_grid->addChild<TileSlider>(tr(controls::find(type)->title));
+            tile->setControlStyle(true);
+            tile->setHasDetail(!display);
+            tile->onDetail = [this] { if (onSoundDetail) onSoundDetail(); };
+            tile->slider()->setRange(display ? 1 : 0, display ? 100 : 1, display ? 1 : .01);
+            tile->slider()->onMoved = [this, display](double value) {
+                if (display && m_services.brightnessEnabled())
+                    m_services.setBrightness(int(std::lround(value)));
+                else if (!display && m_services.hasSink()) {
+                    m_services.setVolume(value);
+                    m_services.setMuted(value == 0);
+                }
+            };
+            view = tile;
+        } else {
+            const auto *def = controls::find(type);
+            auto *card = m_grid->addChild<CardItem>();
+            card->setTitle(tr(def->title));
+            if (artworkFor(type, false).empty())
+                card->setThemeGlyph(def->icon, type == "wifi");
+            else
+                card->setArtwork(def->icon);
+            card->setHasDetail(type == "wifi" || type == "bluetooth" || type == "battery");
+            card->onClicked = [this, type] { if (activate) activate(type, false); };
+            card->onDetail = [this, type] {
+                if (type == "wifi" && onWirelessDetail)
+                    onWirelessDetail();
+                else if (type == "bluetooth" && onBluetoothDetail)
+                    onBluetoothDetail();
+                else if (activate)
+                    activate(type, true);
+            };
+            view = card;
+        }
+        view->setName(type);
+        m_tiles.emplace(tile.id, view);
+    }
+
+    m_progress = 1;
+    if (animate && window()) {
+        m_transition = std::make_unique<ui::Animation>(window());
+        m_transition->setDuration(240ms);
+        m_transition->setEasing(ui::Animation::Easing::OutCubic);
+        m_transition->onUpdate = [this](double t) { m_progress = t; requestLayout(); m_chrome->requestPaint(); };
+        m_progress = 0;
+        m_transition->start();
+    }
+    refresh();
+}
+
+void ControlCenterView::changed(bool animate)
+{
+    rebuild(animate);
+    if (onModelChanged)
+        onModelChanged();
+    if (onHeightChanged)
+        onHeightChanged();
+    m_chrome->requestPaint();
+}
+
+void ControlCenterView::reveal()
+{
+    if (!window())
+        return;
+    m_transition = std::make_unique<ui::Animation>(window());
+    m_transition->setDuration(250ms);
+    m_transition->setEasing(ui::Animation::Easing::OutCubic);
+    m_previous.clear();
+    m_progress = 0;
+    m_transition->onUpdate = [this](double t) { m_progress = t; requestLayout(); };
+    m_transition->start();
+}
+
+void ControlCenterView::edit(bool enabled)
+{
+    if (editing() == enabled || (enabled && m_maximumWidth < 490))
+        return;
+    m_chrome->cancelDrag();
+    m_chrome->editing = enabled;
+    m_chrome->galleryScroll = m_chrome->sidebarScroll = 0;
+    m_chrome->category.clear();
+    m_chrome->search->setText({});
+    m_scroll = 0;
+    m_catalogReveal = 1;
+    if (enabled && window()) {
+        m_catalogReveal = 0;
+        m_catalogTween = std::make_unique<ui::Animation>(window());
+        m_catalogTween->setDuration(255ms);
+        m_catalogTween->setEasing(ui::Animation::Easing::OutCubic);
+        m_catalogTween->onUpdate = [this](double t) {
+            m_catalogReveal = t;
+            requestLayout();
+            m_chrome->requestLayout();
+            m_chrome->requestPaint();
+        };
+        m_catalogTween->start();
+    } else if (m_catalogTween) {
+        m_catalogTween->stop();
+    }
+    changed(false);
+}
+
+bool ControlCenterView::escapeEditor()
+{
+    if (!editing())
+        return false;
+    if (m_chrome->held)
+        m_chrome->cancelDrag();
+    else
+        edit(false);
+    return true;
+}
+
+void ControlCenterView::selectPage(int id)
+{
+    if (!m_model.page(id))
+        return;
+    m_model.select(id);
+    m_page = id;
+    m_scroll = 0;
+    changed(false);
+    reveal();
+}
+
+void ControlCenterView::addPage()
+{
+    const int id = m_model.addPage();
+    if (id >= 0)
+        selectPage(id);
+}
+
 void ControlCenterView::retranslate()
 {
-    m_wireless->setTitle(tr("Wi-Fi"));
-    m_bluetooth->setTitle(tr("Bluetooth"));
-    m_darkMode->setTitle(tr("Dark Mode"));
-    m_doNotDisturb->setTitle(tr("Do Not Disturb"));
-    m_camera->setTitle(tr("Camera"));
-    m_microphone->setTitle(tr("Microphone"));
-    // TRANSLATORS: the title of the screen brightness slider.
-    m_brightness->setTitle(tr("Display"));
-    m_sound->setTitle(tr("Sound"));
+    m_chrome->search->setPlaceholder(tr("Search Controls"));
     m_users->retranslate();
     refresh();
 }
 
 void ControlCenterView::refresh()
 {
-    const double before = layoutHeight();
-
+    const bool hadUsers = m_users->isVisible();
     m_users->setUsers(m_services.deviceUsers());
-    m_users->setVisible(!m_users->users().empty());
-
-    m_wireless->setVisible(m_services.wirelessHardwareEnabled());
-    m_wireless->setChecked(m_services.wirelessEnabled());
-    const std::string network = m_services.wirelessName();
-    m_wireless->setStatus(!m_wireless->isChecked() ? tr("Off") : !network.empty() ? network : tr("On"));
-
-    m_bluetooth->setVisible(m_services.bluetoothAvailable());
-    m_bluetooth->setChecked(m_services.bluetoothEnabled());
-    m_bluetooth->setStatus(m_bluetooth->isChecked() ? tr("On") : tr("Off"));
-
-    m_darkMode->setChecked(ui::Theme::current().darkMode);
-    m_darkMode->setStatus(m_darkMode->isChecked() ? tr("On") : tr("Off"));
-    m_doNotDisturb->setChecked(m_services.doNotDisturb());
-    m_doNotDisturb->setStatus(m_doNotDisturb->isChecked() ? tr("On") : tr("Off"));
-    m_camera->setChecked(m_services.cameraEnabled());
-    m_camera->setStatus(m_camera->isChecked() ? tr("On") : tr("Off"));
-    m_microphone->setChecked(m_services.microphoneEnabled());
-    m_microphone->setStatus(m_microphone->isChecked() ? tr("On") : tr("Off"));
-
-    m_media->setState(m_services.media());
-
-    m_brightness->setVisible(m_services.brightnessEnabled());
-    m_brightness->slider()->setValue(m_services.brightness());
-
-    const bool sink = m_services.hasSink();
-    m_sound->setVisible(sink);
-    m_sound->slider()->setValue(sink ? m_services.volume() : 0);
-    m_sound->slider()->setIcon(panel::artwork(volumeIconName(sink, m_services.volume()), false));
-
+    m_users->setVisible(!editing() && !m_users->users().empty());
+    for (const auto &tile : page().tiles) {
+        const auto it = m_tiles.find(tile.id);
+        if (it == m_tiles.end())
+            continue;
+        const auto *def = controls::find(tile.type);
+        const State live = state ? state(tile.type) : State {};
+        if (auto *card = dynamic_cast<CardItem *>(it->second)) {
+            card->setTitle(tr(def->title));
+            card->setChecked(live.active);
+            card->setStatus(live.status.empty() && !live.available ? tr("Unavailable") : live.status);
+            card->setEnabled(live.available);
+            card->setControlStyle(tile.size == Size::Small, tile.size == Size::Large);
+        } else if (auto *slider = dynamic_cast<TileSlider *>(it->second)) {
+            slider->setTitle(live.available ? tr(def->title) : std::string(tr(def->title)) + " · " + tr("Unavailable"));
+            slider->slider()->setEnabled(live.available);
+            const bool display = tile.type == "display";
+            slider->slider()->setValue(display ? double(m_services.brightness()) : live.active ? m_services.volume() : 0);
+            slider->slider()->setIcon(panel::artwork(display ? "brightness" : volumeIconName(live.active, m_services.volume()), false));
+        } else if (auto *media = dynamic_cast<MediaTile *>(it->second)) {
+            media->setState(m_services.media());
+        }
+    }
     requestLayout();
-    if (layoutHeight() != before && onHeightChanged)
+    if (onHeightChanged && hadUsers != m_users->isVisible())
         onHeightChanged();
 }
 
-double ControlCenterView::layoutHeight() const
+ui::View *ControlCenterView::control(std::string_view type) const
 {
-    const double width = kWidth - 2 * kGap;
-    std::vector<double> heights;
-    if (m_users->isVisible())
-        heights.push_back(m_users->heightForWidth(width));
-    int cards = 0;
-    for (const CardItem *card : {m_wireless, m_bluetooth, m_darkMode, m_doNotDisturb, m_camera, m_microphone})
-        cards += card->isVisible();
-    const int rows = (cards + 1) / 2;
-    if (rows > 0)
-        heights.push_back(rows * CardItem::kHeight + (rows - 1) * kGap);
-    heights.push_back(MediaTile::kHeight);
-    if (m_brightness->isVisible())
-        heights.push_back(m_brightness->heightForWidth(width));
-    if (m_sound->isVisible())
-        heights.push_back(m_sound->heightForWidth(width));
-    double height = 0;
-    for (double value : heights)
-        height += value;
-    return height + (heights.size() - 1) * kGap;
+    for (const auto &tile : page().tiles)
+        if (tile.type == type)
+            return m_tiles.at(tile.id);
+    return nullptr;
 }
 
-double ControlCenterView::windowHeight(double scale) const
-{
-    // Whole device pixels: the tiles' edges stay on the pixel grid.
-    double size = std::ceil(layoutHeight() + kGap * 2);
-    for (int i = 0; i < 120 && std::abs(size * scale - std::round(size * scale)) > 0.001; ++i)
-        ++size;
-    return size;
-}
+CardItem *ControlCenterView::wirelessCard() const { return static_cast<CardItem *>(control("wifi")); }
+CardItem *ControlCenterView::bluetoothCard() const { return static_cast<CardItem *>(control("bluetooth")); }
+CardItem *ControlCenterView::darkModeCard() const { return static_cast<CardItem *>(control("dark")); }
+CardItem *ControlCenterView::doNotDisturbCard() const { return static_cast<CardItem *>(control("focus")); }
+CardItem *ControlCenterView::cameraCard() const { return static_cast<CardItem *>(control("camera")); }
+MediaTile *ControlCenterView::media() const { return static_cast<MediaTile *>(control("media")); }
+TileSlider *ControlCenterView::brightnessSlider() const { return static_cast<TileSlider *>(control("display")); }
+TileSlider *ControlCenterView::soundSlider() const { return static_cast<TileSlider *>(control("sound")); }
 
 void ControlCenterView::layout()
 {
-    // A theme change relays the view out: the dark mode card follows it.
-    if (m_darkModeShown != ui::Theme::current().darkMode) {
-        m_darkModeShown = ui::Theme::current().darkMode;
-        m_darkMode->setChecked(m_darkModeShown);
-        m_darkMode->setStatus(m_darkModeShown ? tr("On") : tr("Off"));
-        m_media->setState(m_services.media());
+    m_scroll = std::clamp(m_scroll, 0.0, std::max(0.0, gridHeight() - gridViewport()));
+    const auto clip = gridClip();
+    m_grid->setGeometry(clip);
+    m_glassTiles.clear();
+    for (const auto &tile : page().tiles) {
+        auto *view = m_tiles.at(tile.id);
+        auto r = translated(tileRect(tile.size, tile.cell), -clip.x, -clip.y);
+        if (m_progress < 1) {
+            if (const auto it = m_previous.find(tile.id); it != m_previous.end()) {
+                const auto &from = it->second;
+                r = {std::lerp(from.x, r.x, m_progress), std::lerp(from.y, r.y, m_progress),
+                     std::lerp(from.width, r.width, m_progress), std::lerp(from.height, r.height, m_progress)};
+            } else {
+                r = translated(r, 0, -12 * (1 - m_progress));
+            }
+        }
+        view->setGeometry(r);
+        const bool dragging = m_chrome->dragging && m_chrome->held && m_chrome->held->id == tile.id;
+        view->setVisible(!dragging);
+        view->setOpacity(m_previous.contains(tile.id) ? 1 : .55 + .45 * m_progress);
+        if (!dragging)
+            m_glassTiles.push_back(translated(r, clip.x, clip.y));
     }
-
-    const double width = kWidth - 2 * kGap;
-    double y = kGap;
-
-    if (m_users->isVisible()) {
-        const double height = m_users->heightForWidth(width);
-        m_users->setGeometry({kGap, y, width, height});
-        y += height + kGap;
-    }
-
-    const double cellWidth = (width - kGap) / 2;
-    int index = 0;
-    for (CardItem *card : {m_wireless, m_bluetooth, m_darkMode, m_doNotDisturb, m_camera, m_microphone}) {
-        if (!card->isVisible())
-            continue;
-        const int row = index / 2;
-        const int column = index % 2;
-        card->setGeometry({kGap + column * (cellWidth + kGap), y + row * (CardItem::kHeight + kGap), cellWidth,
-                           CardItem::kHeight});
-        ++index;
-    }
-    const int rows = (index + 1) / 2;
-    if (rows > 0)
-        y += rows * CardItem::kHeight + (rows - 1) * kGap + kGap;
-
-    m_media->setGeometry({kGap, y, width, MediaTile::kHeight});
-    y += MediaTile::kHeight + kGap;
-
-    for (TileSlider *slider : {m_brightness, m_sound}) {
-        if (!slider->isVisible())
-            continue;
-        const double height = slider->heightForWidth(width);
-        slider->setGeometry({kGap, y, width, height});
-        y += height + kGap;
-    }
+    if (m_users->isVisible())
+        m_users->setGeometry({kInset, kInset, canvasWidth() - 2 * kInset, m_users->heightForWidth(canvasWidth() - 2 * kInset)});
+    // In live mode the chrome leaves the native sliders and media interactive.
+    m_chrome->setGeometry(editing() ? localRect() : editRect());
+    if (onGlassChanged)
+        onGlassChanged();
 }
 
-static double windowScale(const ui::View *view)
+ui::Path ControlCenterView::glassShape() const
 {
-    const ui::Window *window = view->window();
-    return window && window->scale() > 0 ? window->scale() : 1;
+    ui::Path mask;
+    for (const auto &r : m_glassTiles)
+        mask.addRoundedRect(r, radius(r), radius(r));
+    ui::Path clip;
+    clip.addRect(gridClip());
+    mask = mask.intersected(clip);
+    if (editing())
+        mask.addRoundedRect(catalogRect(), 24, 24);
+    else if (m_users->isVisible())
+        mask.addRoundedRect(m_users->geometry(), 20, 20);
+    const auto footer = editRect();
+    mask.addRoundedRect(footer, footer.height / 2, footer.height / 2);
+    return mask;
 }
 
-ControlCenterPager::ControlCenterPager(std::unique_ptr<ControlCenterView> main)
+void ControlCenterView::scrollGrid(double delta)
 {
-    m_main = main.get();
-    addChild(std::move(main));
-    m_main->onHeightChanged = [this] { sizeChanged(); };
-}
-
-ControlCenterPager::~ControlCenterPager() = default;
-
-bool ControlCenterPager::isSliding() const
-{
-    return m_tween && m_tween->isRunning();
-}
-
-void ControlCenterPager::showDetail(std::unique_ptr<StatusPanelView> page)
-{
-    if (m_detail)
-        takeChild(m_detail);
-    m_detail = page.get();
-    addChild(std::move(page));
-    m_detail->onShownBottomChanged = [this] {
+    const auto next = std::clamp(m_scroll + delta, 0.0, std::max(0.0, gridHeight() - gridViewport()));
+    if (next != m_scroll) {
+        m_scroll = next;
         requestLayout();
-        sizeChanged();
-    };
-    m_detail->setGeometry({0, 0, status_panel::kWidth, m_detail->contentHeight()});
-    // Measured in the window now: the page starts at its height rather than
-    // growing into it.
-    m_detail->setShown(false);
-    m_detail->setShown(true);
-    slideTo(1);
-}
-
-void ControlCenterPager::showMain()
-{
-    if (m_detail)
-        slideTo(0);
-}
-
-void ControlCenterPager::slideTo(double target)
-{
-    m_target = target;
-    if (!window() || m_progress == target) {
-        if (m_tween)
-            m_tween->stop();
-        setProgress(target);
-        settle();
-        return;
+        m_chrome->requestPaint();
     }
-    if (!m_tween) {
-        m_tween = std::make_unique<ui::Animation>(window());
-        m_tween->setDuration(status_panel::kHeightDuration);
-        m_tween->setEasing(ui::Animation::Easing::Linear);
-        m_tween->onUpdate = [this](double t) { setProgress(m_from + (m_target - m_from) * panel::glide(t)); };
-        m_tween->onFinished = [this] { settle(); };
-    }
-    m_tween->stop();
-    m_from = m_progress;
-    // Layered, the pages move and fade without being painted again, each
-    // fading as one; the clip keeps the taller one inside the window's
-    // corners as the window's height glides.
-    m_main->setVisible(true);
-    m_main->setLayered(true);
-    m_detail->setLayered(true);
-    setClipsChildren(true);
-    setChildClipRadius(panel::kPanelRadius);
-    m_tween->start();
 }
 
-void ControlCenterPager::setProgress(double progress)
+bool ControlCenterView::scroll(const ui::ScrollEvent &event)
 {
-    if (progress == m_progress)
-        return;
-    m_progress = progress;
-    requestLayout();
-    sizeChanged();
-}
-
-void ControlCenterPager::settle()
-{
-    if (m_target == 0 && m_detail) {
-        takeChild(m_detail);
-        m_detail = nullptr;
-    }
-    m_main->setVisible(m_target == 0);
-    m_main->setLayered(false);
-    if (m_detail)
-        m_detail->setLayered(false);
-    setClipsChildren(false);
-    requestLayout();
-    sizeChanged();
-}
-
-void ControlCenterPager::sizeChanged()
-{
-    if (onSizeChanged)
-        onSizeChanged();
-}
-
-double ControlCenterPager::windowWidth() const
-{
-    const double main = ControlCenterView::kWidth;
-    if (!m_detail)
-        return main;
-    return std::round(main + (status_panel::kWidth - main) * m_progress);
-}
-
-double ControlCenterPager::windowHeight(double scale) const
-{
-    const double main = m_main->windowHeight(scale);
-    if (!m_detail)
-        return main;
-    const double detail = std::max(1.0, std::round(m_detail->shownBottom()));
-    if (m_progress <= 0)
-        return main;
-    if (m_progress >= 1)
-        return detail;
-    return std::round(main + (detail - main) * m_progress);
-}
-
-void ControlCenterPager::layout()
-{
-    const double scale = windowScale(this);
-    // Whole device pixels, so the pages' text stays sharp on the way.
-    const auto snapped = [scale](double x) { return std::round(x * scale) / scale; };
-    m_main->setGeometry({0, 0, ControlCenterView::kWidth, m_main->windowHeight(scale)});
-    m_main->setOpacity(1 - m_progress);
-    m_main->setTransform({{snapped(-kSlide * m_progress), 0}, 1});
-    if (m_detail) {
-        m_detail->setGeometry({0, 0, status_panel::kWidth, std::max(1.0, std::ceil(m_detail->shownBottom()))});
-        m_detail->setOpacity(m_progress);
-        m_detail->setTransform({{snapped(kSlide * (1 - m_progress)), 0}, 1});
-    }
+    if (gridHeight() <= gridViewport())
+        return false;
+    scrollGrid(event.deltaY);
+    return true;
 }
 
 std::string volumeIconName(bool hasSink, double volume)
 {
-    const double level = hasSink ? volume * 100.0 : -1;
-    if (level <= 0)
+    if (!hasSink || volume <= 0)
         return "audio-volume-muted-symbolic";
-    if (level <= 25)
+    if (volume <= .25)
         return "audio-volume-low-symbolic";
-    if (level <= 75)
+    if (volume <= .75)
         return "audio-volume-medium-symbolic";
     return "audio-volume-high-symbolic";
 }

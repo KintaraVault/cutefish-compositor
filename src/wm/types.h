@@ -48,6 +48,7 @@ constexpr bool isRoundedStateType(WindowStateType type)
 enum class WindowRole {
     Normal,
     Desktop,
+    DesktopWidget,
     Panel,
     Dock,
     Launchpad,

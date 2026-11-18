@@ -17,7 +17,7 @@ class Window;
 //
 // Bottom to top:
 //
-//   Desktop < Normal applications < AlwaysOnTop < DesktopPopup < Panel < Launchpad < Dock < Notification < Osd < Capture
+//   Desktop < DesktopWidget < Normal applications < AlwaysOnTop < DesktopPopup < Panel < Launchpad < Dock < Notification < Osd < Capture
 //
 // Osd is the level a volume or brightness key shows, which must not hide
 // behind a banner that happens to be up.
@@ -29,16 +29,17 @@ class Window;
 // scene container.
 enum class StackingLayer {
     Desktop = 0,
-    Normal = 1,
-    AlwaysOnTop = 2,
-    DesktopPopup = 3,
-    Panel = 4,
-    Launchpad = 5,
-    Dock = 6,
-    Notification = 7,
-    Osd = 8,
-    Picker = 9,
-    Capture = 10,
+    DesktopWidget,
+    Normal,
+    AlwaysOnTop,
+    DesktopPopup,
+    Panel,
+    Launchpad,
+    Dock,
+    Notification,
+    Osd,
+    Picker,
+    Capture,
 };
 
 // A panel whose behavior is WindowsCanCover drops into the normal layer.

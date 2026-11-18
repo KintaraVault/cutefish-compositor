@@ -5,10 +5,13 @@
 #include "shell/controlcenter/control_center.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 
 #include "base/event_loop.h"
+#include "base/i18n.h"
 #include "core/main_loop.h"
+#include "core/preferences.h"
 #include "shell/controlcenter/control_center_view.h"
 #include "shell/controlcenter/panel_style.h"
 #include "shell/controlcenter/power_dialog.h"
@@ -21,10 +24,12 @@
 #include "ui/application.h"
 #include "ui/embedded_window.h"
 #include "ui/keys.h"
+#include "ui/popup_glass.h"
 #include "ui/theme.h"
 #include "ui/window.h"
 
 namespace cutefish::shell {
+using i18n::tr;
 
 // The menu bar's height: the control centre hangs this far below the
 // bar's screen's top, whatever the item.
@@ -65,9 +70,10 @@ private:
 };
 
 ControlCenter::ControlCenter(Shell *shell, std::unique_ptr<ControlCenterServices> services,
-                             PowerActions *powerActions)
+                             PowerActions *powerActions, std::string layoutFile)
     : m_shell(shell)
     , m_services(std::move(services))
+    , m_layout(layoutFile.empty() ? preferencesFile("control-center") : std::move(layoutFile))
     , m_powerActions(powerActions)
 {
     m_subscriptions.push_back(m_services->changed.connect([this] { refresh(); }));
@@ -108,6 +114,145 @@ std::unique_ptr<ControlCenter> ControlCenter::create(Shell *shell, MenuBar &menu
                                            &menuBar.powerActions());
 }
 
+void ControlCenter::setAction(std::string type, Action action, Activity active)
+{
+    m_actions.insert_or_assign(std::move(type), ActionEntry {std::move(action), std::move(active)});
+    refresh();
+}
+
+ControlCenterView::State ControlCenter::state(std::string_view type) const
+{
+    const auto toggle = [](bool available, bool active) -> ControlCenterView::State {
+        return {available, available && active, available ? active ? tr("On") : tr("Off") : tr("Unavailable")};
+    };
+    if (type == "wifi") {
+        auto result = toggle(m_services->wirelessHardwareEnabled(), m_services->wirelessEnabled());
+        if (result.active && !m_services->wirelessName().empty())
+            result.status = m_services->wirelessName();
+        return result;
+    }
+    if (type == "bluetooth") return toggle(m_services->bluetoothAvailable(), m_services->bluetoothEnabled());
+    if (type == "dark") return toggle(true, ui::Theme::current().darkMode);
+    if (type == "focus") return toggle(true, m_services->doNotDisturb());
+    if (type == "camera") return toggle(true, m_services->cameraEnabled());
+    if (type == "microphone") return toggle(true, m_services->microphoneEnabled());
+    if (type == "display") return {m_services->brightnessEnabled(), m_services->brightnessEnabled(), {}};
+    if (type == "sound") return {m_services->hasSink(), m_services->hasSink() && !m_services->muted(), {}};
+    if (type == "media") return {true, m_services->media().hasPlayer, {}};
+    if (type == "battery") {
+        const int charge = m_services->chargePercent();
+        return {charge >= 0, charge >= 0 && m_services->onBattery(), charge >= 0 ? std::to_string(charge) + "%" : tr("Unavailable")};
+    }
+    if (type == "lock") return {m_powerActions != nullptr, false, {}};
+    if (type == "mirror" || type == "accessibility" || type == "corners") return {true, false, tr("Settings")};
+    if (type == "night") return toggle(m_services->nightLightAvailable(), m_services->nightLightEnabled());
+    if (const auto it = m_actions.find(std::string(type)); it != m_actions.end())
+        return it->second.active ? toggle(true, it->second.active()) : ControlCenterView::State {true, false, {}};
+    return {};
+}
+
+void ControlCenter::activate(std::string_view type, bool detail)
+{
+    const auto current = state(type);
+    if (!current.available)
+        return;
+    if (type == "wifi") {
+        if (detail) showDetail(Panel::Network);
+        else m_services->enableWireless(!current.active);
+    } else if (type == "bluetooth") {
+        if (detail) showDetail(Panel::Bluetooth);
+        else m_services->setBluetoothEnabled(!current.active);
+    } else if (type == "dark") {
+        m_services->setDarkMode(!current.active);
+    } else if (type == "focus") {
+        m_services->setDoNotDisturb(!current.active);
+    } else if (type == "camera") {
+        m_services->setCameraEnabled(!current.active);
+    } else if (type == "microphone") {
+        m_services->setMicrophoneEnabled(!current.active);
+    } else if (type == "night") {
+        m_services->setNightLightEnabled(!current.active);
+    } else if (type == "battery") {
+        showDetail(Panel::Battery);
+    } else if (type == "display" || type == "mirror" || type == "accessibility" || type == "corners") {
+        closePanels();
+        m_services->openSettings({"-m", type == "accessibility" ? "accessibility" : type == "corners" ? "hotcorners" : "display"});
+    } else if (type == "media") {
+        const auto media = m_services->media();
+        if (media.canControl && media.playing && media.canPause) m_services->mediaPause();
+        else if (media.canControl && !media.playing && media.canPlay) m_services->mediaPlay();
+    } else if (type == "lock" && m_powerActions) {
+        closePanels();
+        m_powerActions->lockScreen();
+    } else if (const auto it = m_actions.find(std::string(type)); it != m_actions.end()) {
+        closePanels();
+        it->second.run();
+        refresh();
+    }
+}
+
+std::optional<bool> ControlCenter::statusVisibility(Panel panel) const
+{
+    std::string_view type;
+    switch (panel) {
+    case Panel::Network: type = "wifi"; break;
+    case Panel::Bluetooth: type = "bluetooth"; break;
+    case Panel::Volume: type = "sound"; break;
+    case Panel::Battery: type = "battery"; break;
+    default: return std::nullopt;
+    }
+    if (!m_layout.hasPin(type))
+        return std::nullopt;
+    const auto pin = m_layout.pin(type);
+    return pin == controls::Pin::Always || (pin == controls::Pin::Active && state(type).active);
+}
+
+std::vector<MenuBarPanels::Item> ControlCenter::panelItems() const
+{
+    std::vector<Item> result;
+    const auto *view = controlCenterView();
+    for (const auto &page : m_layout.pages()) {
+        if (page.id)
+            result.push_back({"page-" + std::to_string(page.id), page.icon, tr("Control Center Page"),
+                              view && view->pageId() == page.id, true, view && view->editing()});
+    }
+    if (view && view->editing() && m_layout.pages().size() < controls::Layout::kPages)
+        result.push_back({"new-page", "cc-add", tr("Add Control Center Page"), false, true, true});
+    for (const auto &def : controls::catalog()) {
+        const std::string_view type = def.id;
+        if (type == "wifi" || type == "bluetooth" || type == "sound" || type == "battery")
+            continue;
+        const auto mode = m_layout.pin(type);
+        if (mode == controls::Pin::Never)
+            continue;
+        const auto live = state(type);
+        if (mode == controls::Pin::Always || live.active)
+            result.push_back({def.id, def.icon, tr(def.title), false, live.available});
+    }
+    return result;
+}
+
+void ControlCenter::openItem(const std::string &id, ShellWindow *bar, const base::Rect &anchor)
+{
+    if (id == "new-page") {
+        if (auto *view = controlCenterView(); view && view->editing())
+            view->addPage();
+        return;
+    }
+    if (id.starts_with("page-")) {
+        int page = 0;
+        if (auto [end, ec] = std::from_chars(id.data() + 5, id.data() + id.size(), page);
+            ec == std::errc() && end == id.data() + id.size() && m_layout.page(page)) {
+            if (auto *view = controlCenterView(); view && view->editing())
+                view->selectPage(page);
+            else
+                open(Panel::ControlCenter, bar, anchor, page);
+        }
+    } else if (controls::find(id)) {
+        activate(id, false);
+    }
+}
+
 size_t ControlCenter::index(Panel panel)
 {
     switch (panel) {
@@ -138,6 +283,22 @@ bool ControlCenter::isOpen(Panel panel) const
         return false;
     const Open &open = m_open[index(panel)];
     return open.window && !open.window->isHidden();
+}
+
+bool ControlCenter::isPanelChecked(Panel panel) const
+{
+    return isOpen(panel) && (panel != Panel::ControlCenter || controlCenterView()->pageId() == 0);
+}
+
+bool ControlCenter::handlePanelClick(Panel panel)
+{
+    if (panel == Panel::ControlCenter) {
+        if (auto *view = controlCenterView(); view && view->editing() && view->pageId() != 0) {
+            view->selectPage(0);
+            return true;
+        }
+    }
+    return false;
 }
 
 ControlCenterView *ControlCenter::controlCenterView() const
@@ -213,6 +374,11 @@ base::Rect ControlCenter::panelGeometry(Panel panel, ShellWindow *bar, const bas
 
 void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &anchor)
 {
+    open(panel, bar, anchor, 0);
+}
+
+void ControlCenter::open(Panel panel, ShellWindow *bar, const base::Rect &anchor, int page)
+{
     if (!hasPanel(panel) || !bar || !bar->window())
         return;
     Open &open = m_open[index(panel)];
@@ -222,8 +388,19 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
     std::unique_ptr<ui::View> content;
     switch (panel) {
     case Panel::ControlCenter: {
-        auto view = std::make_unique<ControlCenterView>(*m_services);
+        const auto *output = m_shell->output(bar->outputName());
+        const base::Rect screen = output ? output->bounds : base::Rect(0, 0, 1440, 960);
+        const base::Rect area = output ? m_shell->workArea(*output) : screen;
+        m_layout.select(page);
+        auto view = std::make_unique<ControlCenterView>(*m_services, m_layout, page,
+                screen.width() - 2 * int(panel::kPopupMargin),
+                std::max(150, area.bottom() - screen.y() - kBarHeight - 2 * int(panel::kPopupMargin)));
         open.controlCenter = view.get();
+        view->state = [this](std::string_view type) { return state(type); };
+        view->activate = [this](std::string_view type, bool detail) { activate(type, detail); };
+        view->onModelChanged = [this] { panelsChanged(); };
+        view->onGlassChanged = [this] { updateWindow(Panel::ControlCenter); };
+        view->refresh();
         view->onWirelessDetail = [this] { showDetail(Panel::Network); };
         view->onBluetoothDetail = [this] { showDetail(Panel::Bluetooth); };
         view->onSoundDetail = [this] { showDetail(Panel::Volume); };
@@ -260,6 +437,8 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
     if (open.panel)
         open.panel->setMaximumHeight(open.geometry.height());
     open.window = ui::Window::createPopup(bar->window(), placementAt(bar, open.geometry), true);
+    if (open.controlCenter)
+        ui::PopupGlass::prepare(*open.window);
     auto root = std::make_unique<PopupRoot>(std::move(content));
     open.root = root.get();
     open.root->onEscape = [this, panel] { escape(panel); };
@@ -292,6 +471,8 @@ void ControlCenter::openPanel(Panel panel, ShellWindow *bar, const base::Rect &a
     open.window->resize({double(open.geometry.width()),
                          open.panel ? std::max(1.0, open.panel->contentHeight()) : double(open.geometry.height())});
     open.window->show();
+    if (open.controlCenter)
+        open.controlCenter->reveal();
     if (open.panel) {
         // Measured at the output's scale now: no open animation.
         open.panel->setShown(false);
@@ -316,9 +497,15 @@ void ControlCenter::updateWindow(Panel panel)
         height = std::max(1, int(std::lround(open.panel->shownBottom())));
         open.window->resize({double(open.geometry.width()), double(height)});
     }
+    ui::Path shape;
+    auto material = panel::panelGlass();
+    if (open.pager && !open.pager->detailPage()) {
+        shape = open.controlCenter->glassShape();
+        material.tintAlpha = open.dark ? .56f : .39f;
+        material.saturation = 1.08f;
+    }
     window->setBackgroundBlur(base::Rect(0, 0, open.geometry.width(), height),
-                              int(panel::kPanelRadius),
-                              panel::panelGlass());
+                              int(panel::kPanelRadius), material, shape);
 }
 
 void ControlCenter::fitToWorkArea(Panel panel)
@@ -370,8 +557,12 @@ void ControlCenter::showDetail(Panel panel)
         page = std::make_unique<NetworkPanel>(*m_services);
     else if (panel == Panel::Volume)
         page = std::make_unique<VolumePanel>(*m_services);
-    else
+    else if (panel == Panel::Bluetooth)
         page = std::make_unique<BluetoothPanel>(*m_services);
+    else if (panel == Panel::Battery)
+        page = std::make_unique<BatteryPanel>(*m_services);
+    else
+        return;
     page->onCloseRequested = [this] { close(Panel::ControlCenter); };
     page->setMaximumHeight(detailMaximumHeight());
     StatusPanelView *shown = page.get();
@@ -382,6 +573,8 @@ void ControlCenter::showDetail(Panel panel)
 void ControlCenter::escape(Panel panel)
 {
     ControlCenterPager *pager = panel == Panel::ControlCenter ? m_open[0].pager : nullptr;
+    if (pager && pager->mainPage()->escapeEditor())
+        return;
     if (!pager || !pager->isShowingDetail()) {
         close(panel);
         return;
@@ -406,6 +599,9 @@ void ControlCenter::close(Panel panel)
         open.controlCenter->onWirelessDetail = nullptr;
         open.controlCenter->onBluetoothDetail = nullptr;
         open.controlCenter->onSoundDetail = nullptr;
+        open.controlCenter->onHeightChanged = nullptr;
+        open.controlCenter->onModelChanged = nullptr;
+        open.controlCenter->onGlassChanged = nullptr;
     }
     if (open.pager) {
         open.pager->onSizeChanged = nullptr;
@@ -464,6 +660,9 @@ void ControlCenter::refresh()
         m_bluetooth = bluetooth;
         changed();
     }
+    if (std::ranges::any_of(controls::catalog(), [this](const auto &def) { return m_layout.hasPin(def.id); }))
+        panelsChanged();
+    dataChanged();
 }
 
 MenuBarIndicators::Audio ControlCenter::audio() const

@@ -6,6 +6,8 @@
 #define CUTEFISH_SHELL_MENUBAR_MENU_BAR_PANELS_H_
 
 #include <string>
+#include <optional>
+#include <vector>
 
 #include "base/geometry.h"
 #include "base/signal.h"
@@ -38,6 +40,20 @@ public:
     virtual void openPanel(Panel panel, ShellWindow *bar, const base::Rect &anchor) = 0;
     virtual void closePanels() = 0;
     virtual bool isOpen(Panel panel) const = 0;
+    virtual bool isPanelChecked(Panel panel) const { return isOpen(panel); }
+    virtual bool handlePanelClick(Panel) { return false; }
+
+    struct Item {
+        std::string id;
+        std::string icon;
+        std::string title;
+        bool checked = false;
+        bool available = true;
+        bool keepPanels = false;
+    };
+    virtual std::vector<Item> panelItems() const { return {}; }
+    virtual std::optional<bool> statusVisibility(Panel) const { return std::nullopt; }
+    virtual void openItem(const std::string &, ShellWindow *, const base::Rect &) {}
 
     // A panel opened or closed.
     base::Signal<> panelsChanged;

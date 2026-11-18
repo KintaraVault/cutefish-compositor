@@ -29,6 +29,7 @@ public:
 
     // The bar's own artwork, menubar/<dark|light>/<name>.svg.
     void setIconName(std::string name);
+    void setThemeIcon(std::string name);
     // A FishUI glyph in the bar's colour, in place of the artwork.
     void setGlyph(std::string name);
     void setIconWidth(double width);
@@ -65,6 +66,7 @@ private:
     void updateContent();
 
     std::string m_iconName;
+    std::string m_themeIcon;
     std::string m_glyph;
     std::string m_label;
     double m_iconWidth = BarContext::kIconSize;

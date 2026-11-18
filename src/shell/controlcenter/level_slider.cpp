@@ -221,12 +221,15 @@ void TileSlider::layout()
         titleWidth -= size + ui::Theme::current().smallSpacing;
     }
     m_title->setGeometry({padding + 3, padding + labelTop, std::max(0.0, titleWidth), labelHeight});
-    m_slider->setGeometry({padding, padding + labelTop + labelHeight + spacing, width, LevelSlider::kHeight});
+    m_slider->setGeometry({padding, m_controlStyle ? geometry().height - LevelSlider::kHeight - 13
+                                                  : padding + labelTop + labelHeight + spacing,
+                           width, LevelSlider::kHeight});
 }
 
 void TileSlider::paint(ui::Painter &painter)
 {
-    panel::paintTile(painter, localRect());
+    if (!m_controlStyle)
+        panel::paintTile(painter, localRect());
 }
 
 void TileSlider::hoverChanged()

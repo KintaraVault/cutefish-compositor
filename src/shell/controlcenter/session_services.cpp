@@ -67,6 +67,8 @@ public:
         , m_audio(std::make_unique<audio::AudioModel>(audio::AudioObject::Sink, audio::Backend::shared()))
         , m_appearance(shell->bus(), "org.cutefish.Services", "/org/cutefish/Services/Appearance",
                        "org.cutefish.Services.Appearance")
+        , m_nightLight(shell->bus(), "org.cutefish.Services", "/org/cutefish/Services/NightLight",
+                       "org.cutefish.Services.NightLight")
         , m_privacy(dbus::Connection::system(), kPrivacyService, kPrivacyPath, kPrivacyInterface)
     {
         const auto notify = [this] { scheduleChanged(); };
@@ -108,6 +110,30 @@ public:
         m_subscriptions.push_back(m_menuBar.battery().changed.connect(notify));
         m_subscriptions.push_back(m_menuBar.powerProfiles().profilesChanged.connect(notify));
         m_subscriptions.push_back(m_menuBar.powerProfiles().activeProfileChanged.connect(notify));
+
+        for (const auto &[name, value] : {std::pair {"available", &m_nightAvailable}, {"enabled", &m_nightEnabled}}) {
+            m_matches.push_back(m_nightLight.onSignal(std::string(name) + "Changed", [this, value](const dbus::Message &message) {
+                if (message.read(*value))
+                    scheduleChanged();
+            }));
+        }
+        if (shell->bus())
+            m_nightOwner = shell->bus()->watchName(m_nightLight.service(), [this](const std::string &owner) {
+                m_nightRead = {};
+                m_nightAvailable = m_nightEnabled = false;
+                scheduleChanged();
+                if (owner.empty())
+                    return;
+                m_nightRead = m_nightLight.getAllAsync([this](const dbus::Reply &reply) {
+                    if (auto values = reply.value<dbus::VariantMap>()) {
+                        for (const auto &[name, value] : *values) {
+                            if (name == "available") m_nightAvailable = value.get<bool>().value_or(false);
+                            if (name == "enabled") m_nightEnabled = value.get<bool>().value_or(false);
+                        }
+                        scheduleChanged();
+                    }
+                });
+            });
 
         m_matches.push_back(m_privacy.onSignal("cameraEnabledChanged", [this](const dbus::Message &message) {
             bool enabled = true;
@@ -296,6 +322,9 @@ public:
     // --- Switches ---
 
     void setDarkMode(bool dark) override { m_appearance.send("setDarkMode", dark); }
+    bool nightLightAvailable() const override { return m_nightAvailable; }
+    bool nightLightEnabled() const override { return m_nightEnabled; }
+    void setNightLightEnabled(bool enabled) override { m_nightLight.send("setEnabled", enabled); }
 
     bool doNotDisturb() const override { return m_notifications && m_notifications->doNotDisturb(); }
 
@@ -503,6 +532,11 @@ private:
     std::unique_ptr<bluez::DevicesModel> m_pairedDevices;
     std::unique_ptr<audio::AudioModel> m_audio;
     dbus::Proxy m_appearance;
+    dbus::Proxy m_nightLight;
+    dbus::NameWatch m_nightOwner;
+    dbus::PendingCall m_nightRead;
+    bool m_nightAvailable = false;
+    bool m_nightEnabled = false;
     dbus::Proxy m_privacy;
     PendingCalls m_calls;
     base::Job m_privacyState;

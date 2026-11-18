@@ -32,6 +32,8 @@ const char* toString(WindowRole role)
         return "normal";
     case WindowRole::Desktop:
         return "desktop";
+    case WindowRole::DesktopWidget:
+        return "desktop-widget";
     case WindowRole::Panel:
         return "panel";
     case WindowRole::Dock:

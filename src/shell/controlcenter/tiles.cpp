@@ -4,6 +4,8 @@
 
 #include "shell/controlcenter/tiles.h"
 
+#include <array>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -90,6 +92,8 @@ CardItem::CardItem()
     m_svg = addChild<SvgIcon>();
     m_glyph = addChild<ui::Icon>(std::string(), kIconSize);
     m_glyph->setVisible(false);
+    m_themeGlyph = addChild<ui::ThemeIcon>(std::string(), 24);
+    m_themeGlyph->setVisible(false);
     m_chevron = addChild<DetailChevron>();
     m_chevron->setVisible(false);
     m_title = addChild<ui::Label>();
@@ -104,6 +108,7 @@ void CardItem::setArtwork(std::string name)
 {
     m_artwork = std::move(name);
     m_glyph->setVisible(false);
+    m_themeGlyph->setVisible(false);
     m_svg->setVisible(true);
     updateIcon();
 }
@@ -114,7 +119,31 @@ void CardItem::setGlyph(std::string name)
     m_glyph->setIconName(std::move(name));
     m_glyph->setVisible(true);
     m_svg->setVisible(false);
+    m_themeGlyph->setVisible(false);
     updateIcon();
+}
+
+void CardItem::setThemeGlyph(std::string name, bool builtin)
+{
+    if (builtin) {
+        setGlyph(std::move(name));
+        return;
+    }
+    m_artwork.clear();
+    m_svg->setVisible(false);
+    m_glyph->setVisible(false);
+    m_themeGlyph->setIconName(std::move(name));
+    m_themeGlyph->setVisible(true);
+    updateIcon();
+}
+
+void CardItem::setControlStyle(bool small, bool large)
+{
+    m_controlStyle = true;
+    m_small = small;
+    m_large = large;
+    requestLayout();
+    requestPaint();
 }
 
 void CardItem::setChecked(bool checked)
@@ -155,6 +184,11 @@ void CardItem::setHasDetail(bool detail)
 ui::RectF CardItem::plateRect() const
 {
     const double padding = ui::Theme::current().largeSpacing;
+    if (m_controlStyle) {
+        const double size = m_small ? 30 : 36;
+        return {m_small ? (geometry().width - size) / 2 : padding,
+                m_small || !m_large ? (geometry().height - size) / 2 : padding, size, size};
+    }
     return {padding, (geometry().height - kPlateSize) / 2, kPlateSize, kPlateSize};
 }
 
@@ -173,10 +207,11 @@ void CardItem::hoverChanged()
 
 void CardItem::updateIcon()
 {
-    const bool white = panel::dark() || m_checked;
+    const bool white = m_controlStyle && m_checked && (m_small || m_large) ? false : panel::dark() || m_checked;
     if (!m_artwork.empty())
         m_svg->setFile(panel::artwork(m_artwork, white));
     m_glyph->setColor(white ? kWhite : kLightArtwork);
+    m_themeGlyph->setColor(white ? kWhite : kLightArtwork);
 }
 
 void CardItem::layout()
@@ -187,35 +222,53 @@ void CardItem::layout()
     const double padding = theme.largeSpacing;
     const double height = geometry().height;
     const ui::RectF slot = plateRect();
-    const ui::RectF icon {slot.x + (kPlateSize - kIconSize) / 2, slot.y + (kPlateSize - kIconSize) / 2, kIconSize,
-                          kIconSize};
+    const double size = m_controlStyle ? (m_small ? 25 : 20) : kIconSize;
+    const ui::RectF icon {slot.x + (slot.width - size) / 2, slot.y + (slot.height - size) / 2, size, size};
     m_svg->setGeometry(icon);
+    m_glyph->setSize(size);
     m_glyph->setGeometry(icon);
+    m_themeGlyph->setSize(size);
+    m_themeGlyph->setGeometry(icon);
+    if (m_controlStyle) {
+        m_title->setVisible(!m_small);
+        m_title->setWeight(600);
+        m_title->setColor(m_checked && m_large ? kLightArtwork : panel::textColor());
+    }
 
     m_status->setFontSize(theme.smallFontSize());
-    m_status->setColor(panel::secondaryTextColor());
-    m_status->setVisible(!m_status->text().empty());
+    m_status->setColor(m_controlStyle && m_checked && m_large ? kLightArtwork.withAlpha(.7) : panel::secondaryTextColor());
+    m_status->setVisible(!m_small && !m_status->text().empty());
     // The chevron's slot stays clear while it is hidden, so the text never
     // elides afresh under the pointer.
     double right = geometry().width - padding;
-    if (m_hasDetail) {
+    m_chevron->setVisible(m_hasDetail && !m_small);
+    if (m_hasDetail && !m_small) {
         const double size = DetailChevron::kSize;
         m_chevron->setColor(panel::secondaryTextColor());
         m_chevron->setGeometry({right - size, (height - size) / 2, size, size});
         right -= size + theme.smallSpacing;
     }
-    const double x = slot.x + kPlateSize + theme.smallSpacing * 1.5;
+    const double x = m_large ? padding : slot.x + slot.width + theme.smallSpacing * 1.5;
     const double width = std::max(0.0, right - x);
     const double titleHeight = m_title->sizeHint().height;
     const double statusHeight = m_status->isVisible() ? m_status->sizeHint().height : 0;
-    const double top = (height - titleHeight - statusHeight) / 2;
+    const double top = m_large ? height - titleHeight - statusHeight - padding : (height - titleHeight - statusHeight) / 2;
     m_title->setGeometry({x, top, width, titleHeight});
     m_status->setGeometry({x, top + titleHeight, width, statusHeight});
 }
 
 void CardItem::paint(ui::Painter &painter)
 {
-    panel::paintTile(painter, localRect());
+    if (m_controlStyle && (m_small || m_large)) {
+        const double radius = m_small ? localRect().height / 2 : 25;
+        if (m_checked)
+            painter.fillRoundedRect(localRect(), radius, ui::Color::rgb(m_pressed ? 0xDADADD : 0xF7F7F9));
+        else if (m_pressed || isHovered())
+            painter.fillRoundedRect(localRect(), radius, panel::textColor(m_pressed ? .19 : .08));
+        return;
+    }
+    if (!m_controlStyle)
+        panel::paintTile(painter, localRect());
     const ui::Color surface = panel::tileInkColor();
     const bool darkSurface = panel::isDark(surface);
     const ui::Color highlight = ui::Theme::current().highlight;
@@ -225,7 +278,7 @@ void CardItem::paint(ui::Painter &painter)
         plate = pressed ? panel::shade(highlight, 0.2) : highlight;
     else
         plate = panel::on(surface, pressed ? (darkSurface ? 0.25 : 0.2) : (darkSurface ? 0.15 : 0.1));
-    const ui::RectF rect = panel::parityPlate(plateRect(), kIconSize, painter.scale());
+    const ui::RectF rect = panel::parityPlate(plateRect(), m_controlStyle ? 20 : kIconSize, painter.scale());
     painter.fillRoundedRect(rect, rect.width / 2, plate);
 }
 
@@ -234,7 +287,7 @@ void CardItem::pointerPress(const ui::PointerEvent &event)
     if (event.button != ui::MouseButton::Left)
         return;
     m_pressed = true;
-    m_platePressed = !m_hasDetail || onPlate(event.position);
+    m_platePressed = !m_hasDetail || (!m_small && onPlate(event.position));
     requestPaint();
 }
 
@@ -252,7 +305,7 @@ void CardItem::pointerRelease(const ui::PointerEvent &event)
     if (m_platePressed) {
         if ((!m_hasDetail || onPlate(event.position)) && onClicked)
             onClicked();
-    } else if (!onPlate(event.position) && onDetail) {
+    } else if ((m_small || !onPlate(event.position)) && onDetail) {
         onDetail();
     }
 }
@@ -425,6 +478,22 @@ void MediaTile::layout()
     const ui::Theme &theme = ui::Theme::current();
     updateArtwork();
     const double padding = theme.largeSpacing;
+    if (m_controlStyle) {
+        const double h = geometry().height;
+        const double w = geometry().width;
+        const double cover = std::min(46.0, h * .29);
+        const ui::RectF art {14, 13, cover, cover};
+        m_cover->setGeometry(art);
+        m_art->setGeometry(art);
+        m_art->setSourceSize({cover, cover});
+        m_title->setWeight(650);
+        m_title->setGeometry({14, h * .44, w - 28, 23});
+        m_artist->setVisible(!m_artist->text().empty());
+        m_artist->setGeometry({14, h * .44 + 22, w - 28, 17});
+        for (size_t i = 0; i < 3; ++i)
+            std::array {m_previous, m_play, m_next}[i]->setGeometry({w * (i + 1) / 4 - 13, h - 35, 26, 26});
+        return;
+    }
     const double content = geometry().height - 2 * padding;
     const ui::RectF art {padding, padding, content, content};
     m_cover->setGeometry(art);
@@ -456,7 +525,8 @@ void MediaTile::layout()
 
 void MediaTile::paint(ui::Painter &painter)
 {
-    panel::paintTile(painter, localRect());
+    if (!m_controlStyle)
+        panel::paintTile(painter, localRect());
     if (m_artReady)
         return;
     // The cards' plate colour under the default cover, inside its mask.

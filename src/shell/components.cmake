@@ -161,6 +161,9 @@ add_library(cutefish-shell-controlcenter STATIC
     src/shell/controlcenter/control_center_services.h
     src/shell/controlcenter/control_center_view.cpp
     src/shell/controlcenter/control_center_view.h
+    src/shell/controlcenter/control_center_pager.cpp
+    src/shell/controlcenter/control_layout.cpp
+    src/shell/controlcenter/control_layout.h
     src/shell/controlcenter/level_slider.cpp
     src/shell/controlcenter/level_slider.h
     src/shell/controlcenter/panel_style.cpp
@@ -179,6 +182,11 @@ target_link_libraries(cutefish-shell-controlcenter PUBLIC cutefish-shell cutefis
     cutefish-shell-menubar cutefish-shell-notification Cutefish::NetworkManagerClient
     Cutefish::BluezClient Cutefish::AudioClient)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-controlcenter)
+add_library(cutefish-shell-widgets STATIC
+    src/shell/widgets/desktop_widgets.cpp
+    src/shell/widgets/desktop_widgets.h)
+target_link_libraries(cutefish-shell-widgets PUBLIC cutefish-shell-controlcenter)
+target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-widgets)
 # The menu bar's items, which the lock screen shows too.
 add_library(cutefish-shell-bar-items STATIC
     src/shell/menubar/bar_item.cpp

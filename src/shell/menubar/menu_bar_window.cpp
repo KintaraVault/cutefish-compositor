@@ -30,6 +30,7 @@
 #include "shell/menubar/vpn_notifier.h"
 #include "ui/embedded_window.h"
 #include "ui/cell_layout.h"
+#include "ui/icon.h"
 #include "ui/menu.h"
 #include "ui/path.h"
 #include "render/renderer.h"
@@ -186,6 +187,16 @@ MenuBarWindow::MenuBarWindow(Shell *shell, std::unique_ptr<MenuBar> menuBar)
     m_network = statusIcon("network", Panel::Network, MenuBar::Control::WiFi);
     m_battery = statusIcon("battery", Panel::Battery, MenuBar::Control::Battery);
     m_battery->setIconWidth(BarContext::kIconSize + 6);
+    m_panelItemsSlot = m_root->addChild<ui::RowLayout>();
+    m_panelItemsSlot->setName("control-center-items");
+    static_cast<ui::RowLayout *>(m_panelItemsSlot)->setSpacing(0);
+    for (const auto &[name, body] : {std::pair {"cc-grid", "<circle cx='5' cy='5' r='2.5'/><circle cx='13' cy='5' r='2.5'/><circle cx='5' cy='13' r='2.5'/><circle cx='13' cy='13' r='2.5'/>"},
+            {"cc-add", "<circle cx='9' cy='9' r='7' fill='none' stroke='black' stroke-width='1.6'/><path d='M5 9h8M9 5v8' stroke='black' stroke-width='1.6'/>"},
+            {"cc-music", "<path d='M7 4v9a2.5 2 0 1 1-1.5-1.85V3L15 1v10a2.5 2 0 1 1-1.5-1.85V3Z'/>"},
+            {"cc-home", "<path d='M1 8 9 1l8 7-2 1.8-1-1V16h-4v-4H8v4H4V8.8l-1 1Z'/>"},
+            {"cc-star", "<path d='m9 1 2.4 5.2 5.6.7-4.2 3.9 1 5.6L9 13.6l-4.8 2.8 1-5.6L1 6.9l5.6-.7Z'/>"},
+            {"cc-world", "<g fill='none' stroke='black' stroke-width='1.4'><circle cx='9' cy='9' r='7'/><ellipse cx='9' cy='9' rx='3.2' ry='7'/><path d='M2 9h14'/></g>"}})
+        ui::Icon::registerGlyph(name, std::string("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'>") + body + "</svg>");
     m_control = statusIcon("control", Panel::ControlCenter, std::nullopt);
     m_control->setIconName("control");
     m_clock = m_root->addChild<ClockItem>(this);
@@ -325,6 +336,8 @@ void MenuBarWindow::updateLook()
     }
     for (StatusIcon *icon : {m_volume, m_bluetooth, m_network, m_battery, m_control})
         icon->updateLook();
+    for (const auto &item : m_panelItems)
+        item.view->updateLook();
     m_clock->updateLook();
     m_recording->updateLook();
     m_agentControl->updateLook();
@@ -386,7 +399,7 @@ void MenuBarWindow::updateBattery()
     const Battery &battery = m_menuBar->battery();
     const bool powerSaver = m_menuBar->powerProfiles().activeProfile() == "power-saver";
     m_battery->showBattery(battery, battery.showPercentage(), powerSaver);
-    if (!m_menuBar->isControlShown(MenuBar::Control::Battery))
+    if (!statusShown(Panel::Battery, MenuBar::Control::Battery))
         m_battery->setVisible(false);
     layoutRow();
 }
@@ -403,7 +416,7 @@ void MenuBarWindow::setIndicators(MenuBarIndicators *indicators)
 void MenuBarWindow::updateIndicators()
 {
     const MenuBarIndicators::Audio audio = m_indicators ? m_indicators->audio() : MenuBarIndicators::Audio();
-    m_volume->setVisible(audio.hasSink && m_menuBar->isControlShown(MenuBar::Control::Sound));
+    m_volume->setVisible(audio.hasSink && statusShown(Panel::Volume, MenuBar::Control::Sound));
     const double level = audio.hasSink ? audio.volume * 100.0 : -1;
     const char *volumeIcon = level <= 0 ? "audio-volume-muted-symbolic"
             : level <= 25              ? "audio-volume-low-symbolic"
@@ -412,10 +425,10 @@ void MenuBarWindow::updateIndicators()
     m_volume->setIconName(audio.hasSink && !audio.muted ? volumeIcon : "audio-volume-muted-symbolic");
 
     m_network->showNetwork(m_indicators ? m_indicators->network() : MenuBarIndicators::Network());
-    if (!m_menuBar->isControlShown(MenuBar::Control::WiFi))
+    if (!statusShown(Panel::Network, MenuBar::Control::WiFi))
         m_network->setVisible(false);
     m_bluetooth->showBluetooth(m_indicators ? m_indicators->bluetooth() : MenuBarIndicators::Bluetooth());
-    if (!m_menuBar->isControlShown(MenuBar::Control::Bluetooth))
+    if (!statusShown(Panel::Bluetooth, MenuBar::Control::Bluetooth))
         m_bluetooth->setVisible(false);
 
     layoutRow();
@@ -471,6 +484,14 @@ void MenuBarWindow::layoutRow()
     preferred(m_tray, m_tray->preferredWidth());
     for (StatusIcon *icon : {m_volume, m_bluetooth, m_network, m_battery, m_control})
         preferred(icon, icon->preferredWidth());
+    double itemsWidth = 0;
+    for (const auto &item : m_panelItems) {
+        const double width = item.view->preferredWidth();
+        preferred(item.view, width);
+        itemsWidth += width;
+    }
+    m_panelItemsSlot->setVisible(!m_panelItems.empty());
+    preferred(m_panelItemsSlot, itemsWidth);
     preferred(m_clock, m_clock->preferredWidth());
     m_root->requestLayout();
 }
@@ -548,16 +569,81 @@ void MenuBarWindow::updateChecked()
     for (Panel panel : {Panel::ControlCenter, Panel::Network, Panel::Bluetooth, Panel::Volume, Panel::Battery,
                         Panel::NotificationCenter}) {
         MenuBarPanels *panels = panelsFor(panel);
-        itemFor(panel)->setChecked(panels && panels->isOpen(panel));
+        itemFor(panel)->setChecked(panels && panels->isPanelChecked(panel));
     }
+    updatePanelItems();
+    updateBattery();
+    updateIndicators();
+}
+
+bool MenuBarWindow::statusShown(Panel panel, MenuBar::Control control) const
+{
+    if (const auto *owner = panelsFor(panel)) {
+        if (const auto visibility = owner->statusVisibility(panel))
+            return *visibility;
+    }
+    return m_menuBar->isControlShown(control);
+}
+
+void MenuBarWindow::updatePanelItems()
+{
+    std::vector<std::pair<MenuBarPanels *, MenuBarPanels::Item>> requested;
+    for (MenuBarPanels *owner : m_panels)
+        for (auto item : owner->panelItems())
+            requested.emplace_back(owner, std::move(item));
+    std::erase_if(m_panelItems, [&](const PanelItem &item) {
+        if (std::ranges::any_of(requested, [&](const auto &entry) {
+                return item.owner == entry.first && item.spec.id == entry.second.id;
+            }))
+            return false;
+        std::shared_ptr<ui::View> retired(m_panelItemsSlot->takeChild(item.view));
+        core::mainLoop()->post([retired] {});
+        return true;
+    });
+    for (auto &[owner, spec] : requested) {
+        const auto it = std::ranges::find_if(m_panelItems, [&](const PanelItem &item) {
+            return item.owner == owner && item.spec.id == spec.id;
+        });
+        StatusIcon *view = it == m_panelItems.end() ? nullptr : it->view;
+        if (!view) {
+            view = m_panelItemsSlot->addChild<StatusIcon>(this);
+            view->setName(spec.id);
+            view->onClicked = [this, owner, id = spec.id, view](const ui::PointerEvent &event) {
+                if (event.button != ui::MouseButton::Left)
+                    return;
+                const auto it = std::ranges::find_if(m_panelItems, [view](const PanelItem &item) { return item.view == view; });
+                if (it == m_panelItems.end() || !it->spec.available)
+                    return;
+                const auto p = view->mapToWindow({0, 0});
+                const base::Rect anchor(int(std::lround(p.x)), int(std::lround(p.y)),
+                                        int(std::lround(view->geometry().width)), int(std::lround(view->geometry().height)));
+                const bool toggle = it->spec.checked && !it->spec.keepPanels;
+                if (!it->spec.keepPanels)
+                    closePopups();
+                if (!toggle)
+                    owner->openItem(id, m_window.get(), anchor);
+            };
+            m_panelItems.push_back({owner, spec, view});
+        } else {
+            it->spec = spec;
+        }
+        if (spec.icon.starts_with("cc-"))
+            view->setGlyph(spec.icon);
+        else
+            view->setThemeIcon(spec.icon);
+        view->setToolTip(spec.title);
+        view->setChecked(spec.checked);
+        view->setOpacity(spec.available ? 1 : .5);
+    }
+    layoutRow();
 }
 
 void MenuBarWindow::togglePanel(Panel panel)
 {
     MenuBarPanels *panels = panelsFor(panel);
-    if (!panels)
+    if (!panels || panels->handlePanelClick(panel))
         return;
-    const bool wasOpen = panels->isOpen(panel);
+    const bool wasOpen = panels->isPanelChecked(panel);
     closePopups();
     if (wasOpen)
         return;

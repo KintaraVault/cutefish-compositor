@@ -75,6 +75,8 @@ public:
     void setArtwork(std::string name);
     // A FishUI.Icon glyph in place of artwork.
     void setGlyph(std::string name);
+    void setThemeGlyph(std::string name, bool builtin = false);
+    void setControlStyle(bool small, bool large);
     void setChecked(bool checked);
     bool isChecked() const { return m_checked; }
     void setTitle(std::string title);
@@ -107,8 +109,12 @@ private:
     bool m_pressed = false;
     bool m_hasDetail = false;
     bool m_platePressed = false;
+    bool m_controlStyle = false;
+    bool m_small = false;
+    bool m_large = false;
     SvgIcon *m_svg;
     ui::Icon *m_glyph;
+    ui::ThemeIcon *m_themeGlyph;
     DetailChevron *m_chevron;
     ui::Label *m_title;
     ui::Label *m_status;
@@ -155,6 +161,7 @@ public:
 
     MediaTile();
 
+    void setControlStyle(bool enabled) { m_controlStyle = enabled; }
     void setState(const MediaState &state);
     IconButton *previousButton() const { return m_previous; }
     IconButton *playButton() const { return m_play; }
@@ -183,6 +190,7 @@ private:
     IconButton *m_play;
     IconButton *m_next;
     bool m_artReady = false;
+    bool m_controlStyle = false;
 };
 
 // The applications behind the bar's privacy dot, one sentence each, in a

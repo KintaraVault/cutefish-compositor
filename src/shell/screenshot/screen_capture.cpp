@@ -460,6 +460,7 @@ ScreenCapture::Picked ScreenCapture::resolve(const base::Point &point) const
         picked.geometry = window->bounds();
         output = outputAt(roundedDownCenter(window->bounds()));
         break;
+    case wm::WindowRole::DesktopWidget:
     case wm::WindowRole::Desktop:
         picked.kind = PickedKind::Desktop;
         if (output)

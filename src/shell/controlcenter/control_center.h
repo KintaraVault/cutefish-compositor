@@ -12,6 +12,7 @@
 #include "base/geometry.h"
 #include "base/signal.h"
 #include "shell/controlcenter/control_center_services.h"
+#include "shell/controlcenter/control_center_view.h"
 #include "shell/shell.h"
 #include "shell/menubar/menu_bar_panels.h"
 
@@ -38,7 +39,8 @@ class ControlCenter : public Component, public MenuBarPanels, public MenuBarIndi
 {
 public:
     // `powerActions` may be null (no power dialog).
-    ControlCenter(Shell *shell, std::unique_ptr<ControlCenterServices> services, PowerActions *powerActions);
+    ControlCenter(Shell *shell, std::unique_ptr<ControlCenterServices> services, PowerActions *powerActions,
+                  std::string layoutFile = {});
     ~ControlCenter() override;
 
     // The session's, on the bar's backend.
@@ -50,6 +52,19 @@ public:
     void openPanel(Panel panel, ShellWindow *bar, const base::Rect &anchor) override;
     void closePanels() override;
     bool isOpen(Panel panel) const override;
+    bool isPanelChecked(Panel panel) const override;
+    bool handlePanelClick(Panel panel) override;
+    std::vector<Item> panelItems() const override;
+    std::optional<bool> statusVisibility(Panel panel) const override;
+    void openItem(const std::string &id, ShellWindow *bar, const base::Rect &anchor) override;
+
+    using Action = std::function<void()>;
+    using Activity = std::function<bool()>;
+    void setAction(std::string type, Action action, Activity active = {});
+    int batteryCharge() const { return m_services->chargePercent(); }
+    bool onBattery() const { return m_services->onBattery(); }
+    base::Signal<> dataChanged;
+    controls::Layout &layoutModel() { return m_layout; }
 
     // --- MenuBarIndicators ---
     Audio audio() const override;
@@ -90,6 +105,9 @@ private:
     };
 
     static size_t index(Panel panel);
+    void open(Panel panel, ShellWindow *bar, const base::Rect &anchor, int page);
+    ControlCenterView::State state(std::string_view type) const;
+    void activate(std::string_view type, bool detail);
     void close(Panel panel);
     void refresh();
     void retranslate();
@@ -108,6 +126,9 @@ private:
 
     Shell *m_shell;
     std::unique_ptr<ControlCenterServices> m_services;
+    controls::Layout m_layout;
+    struct ActionEntry { Action run; Activity active; };
+    std::unordered_map<std::string, ActionEntry> m_actions;
     PowerActions *m_powerActions;
     std::unique_ptr<PowerDialog> m_powerDialog;
     std::array<Open, 5> m_open;

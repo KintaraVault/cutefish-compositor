@@ -7,7 +7,11 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
+#include <unordered_map>
 
+#include "shell/controlcenter/control_layout.h"
+#include "ui/path.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -23,16 +27,18 @@ class MediaTile;
 class StatusPanelView;
 class TileSlider;
 
-// The control centre's content without its window: the device-users tile,
-// the cards, the media card and the two sliders, 360 wide.
 class ControlCenterView : public ui::View
 {
 public:
-    static constexpr double kWidth = 360;
-    // Between the tiles and round them.
-    static constexpr double kGap = 10;
+    static constexpr double kWidth = 382;
+    struct State {
+        bool available = false;
+        bool active = false;
+        std::string status;
+    };
 
-    explicit ControlCenterView(ControlCenterServices &services);
+    ControlCenterView(ControlCenterServices &services, controls::Layout &model, int page,
+                      int maximumWidth, int maximumHeight);
     ~ControlCenterView() override;
 
     // Reads the services again.
@@ -41,42 +47,80 @@ public:
     void retranslate();
     // The window height at `scale`: the layout's, on whole device pixels.
     double windowHeight(double scale) const;
+    double windowWidth() const;
+    ui::Path glassShape() const;
+    const std::vector<ui::RectF> &glassTiles() const { return m_glassTiles; }
+    bool editing() const;
+    bool escapeEditor();
+    void edit(bool enabled);
+    void selectPage(int page);
+    void addPage();
+    int pageId() const { return m_page; }
+    void reveal();
 
-    CardItem *wirelessCard() const { return m_wireless; }
-    CardItem *bluetoothCard() const { return m_bluetooth; }
-    CardItem *darkModeCard() const { return m_darkMode; }
-    CardItem *doNotDisturbCard() const { return m_doNotDisturb; }
-    CardItem *cameraCard() const { return m_camera; }
-    MediaTile *media() const { return m_media; }
-    TileSlider *brightnessSlider() const { return m_brightness; }
-    TileSlider *soundSlider() const { return m_sound; }
+    ui::View *control(std::string_view type) const;
+    CardItem *wirelessCard() const;
+    CardItem *bluetoothCard() const;
+    CardItem *darkModeCard() const;
+    CardItem *doNotDisturbCard() const;
+    CardItem *cameraCard() const;
+    MediaTile *media() const;
+    TileSlider *brightnessSlider() const;
+    TileSlider *soundSlider() const;
 
     // The Wi-Fi or Bluetooth card's chevron: its detail page.
     std::function<void()> onWirelessDetail;
     std::function<void()> onBluetoothDetail;
     // The Sound slider's chevron: the sound panel.
     std::function<void()> onSoundDetail;
+    std::function<State(std::string_view)> state;
+    std::function<void(std::string_view, bool detail)> activate;
+    std::function<void()> onModelChanged;
+    std::function<void()> onGlassChanged;
     // The layout's height may have changed.
     std::function<void()> onHeightChanged;
 
 protected:
     void layout() override;
+    bool scroll(const ui::ScrollEvent &event) override;
 
 private:
-    double layoutHeight() const;
+    class Chrome;
+    friend class Chrome;
+    void rebuild(bool animate = false);
+    void changed(bool animate = true);
+    const controls::Page &page() const;
+    double cell() const;
+    double gap() const;
+    double canvasWidth() const;
+    double catalogWidth() const;
+    double gridTop() const;
+    double gridHeight() const;
+    double gridViewport() const;
+    double canvasX() const;
+    int rows() const;
+    ui::RectF gridClip() const;
+    ui::RectF tileRect(controls::Size size, base::Point cell) const;
+    ui::RectF catalogRect() const;
+    ui::RectF editRect() const;
+    void scrollGrid(double delta);
 
     ControlCenterServices &m_services;
+    controls::Layout &m_model;
+    int m_page;
+    int m_maximumWidth;
+    int m_maximumHeight;
+    ui::View *m_grid;
     DeviceUsersTile *m_users;
-    CardItem *m_wireless;
-    CardItem *m_bluetooth;
-    CardItem *m_darkMode;
-    CardItem *m_doNotDisturb;
-    CardItem *m_camera;
-    CardItem *m_microphone;
-    MediaTile *m_media;
-    TileSlider *m_brightness;
-    TileSlider *m_sound;
-    bool m_darkModeShown = false;
+    Chrome *m_chrome;
+    std::unordered_map<int, ui::View *> m_tiles;
+    std::unordered_map<int, ui::RectF> m_previous;
+    std::vector<ui::RectF> m_glassTiles;
+    std::unique_ptr<ui::Animation> m_transition;
+    double m_progress = 1;
+    double m_scroll = 0;
+    double m_catalogReveal = 1;
+    std::unique_ptr<ui::Animation> m_catalogTween;
 };
 
 // The control centre's pages: the tiles, and a tile's detail page (the

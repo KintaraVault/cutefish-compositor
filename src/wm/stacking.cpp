@@ -13,6 +13,8 @@ StackingLayer layerFor(WindowRole role, PanelBehavior behavior)
     switch (role) {
     case WindowRole::Desktop:
         return StackingLayer::Desktop;
+    case WindowRole::DesktopWidget:
+        return StackingLayer::DesktopWidget;
     case WindowRole::Normal:
         return StackingLayer::Normal;
     case WindowRole::Launchpad:
@@ -45,7 +47,8 @@ StackingLayer layerFor(const Window *window)
         return layerFor(window->transientParent());
     if (window->isPopup() && window->transientParent()) {
         const StackingLayer parentLayer = layerFor(window->transientParent());
-        return parentLayer == StackingLayer::Desktop ? StackingLayer::DesktopPopup : parentLayer;
+        return parentLayer == StackingLayer::Desktop || parentLayer == StackingLayer::DesktopWidget
+                ? StackingLayer::DesktopPopup : parentLayer;
     }
     if (window->isAlwaysOnTop() && window->role() == WindowRole::Normal)
         return StackingLayer::AlwaysOnTop;

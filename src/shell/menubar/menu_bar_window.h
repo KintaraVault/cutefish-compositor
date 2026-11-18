@@ -125,6 +125,8 @@ private:
     MenuBarPanels *panelsFor(MenuBarPanels::Panel panel) const;
     BarItem *itemFor(MenuBarPanels::Panel panel) const;
     void updateChecked();
+    void updatePanelItems();
+    bool statusShown(MenuBarPanels::Panel panel, MenuBar::Control control) const;
     void updatePlateBlur();
     void updateStatusItemLimits();
     ui::RectF availableGeometry() const;
@@ -149,6 +151,13 @@ private:
     StatusIcon *m_network = nullptr;
     StatusIcon *m_battery = nullptr;
     StatusIcon *m_control = nullptr;
+    ui::View *m_panelItemsSlot = nullptr;
+    struct PanelItem {
+        MenuBarPanels *owner;
+        MenuBarPanels::Item spec;
+        StatusIcon *view;
+    };
+    std::vector<PanelItem> m_panelItems;
     ClockItem *m_clock = nullptr;
     std::unique_ptr<ui::Menu> m_controlMenu;
     StatusIcon *m_controlMenuIcon = nullptr;
