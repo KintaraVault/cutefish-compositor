@@ -14,6 +14,7 @@
 #include "core/preferences.h"
 #include "shell/controlcenter/control_center_view.h"
 #include "shell/controlcenter/panel_style.h"
+#include "shell/shell_data.h"
 #include "shell/controlcenter/power_dialog.h"
 #include "shell/controlcenter/session_services.h"
 #include "shell/controlcenter/status_panel.h"
@@ -354,9 +355,9 @@ base::Rect ControlCenter::panelGeometry(Panel panel, ShellWindow *bar, const bas
         const int width = m_open[0].pager ? int(m_open[0].pager->windowWidth()) : int(ControlCenterView::kWidth);
         const double scale = bar ? bar->scale() : 1;
         const int height = m_open[0].pager ? int(m_open[0].pager->windowHeight(scale)) : 0;
-        int x = position.x();
-        if (x + width >= screen.x() + screen.width())
-            x = screen.x() + screen.width() - width - margin;
+        const bool editing = m_open[0].controlCenter && m_open[0].controlCenter->editing();
+        const int right = editing && screen.width() - width >= 174 ? 87 : 12;
+        int x = std::min(position.x(), screen.x() + screen.width() - width - right);
         x = std::max(x, screen.x() + margin);
         // The bar sits at the top of its own screen, which need not be at y 0.
         return base::Rect(x, screen.y() + kBarHeight + margin, width, height);
@@ -501,8 +502,18 @@ void ControlCenter::updateWindow(Panel panel)
     auto material = panel::panelGlass();
     if (open.pager && !open.pager->detailPage()) {
         shape = open.controlCenter->glassShape();
-        material.tintAlpha = open.dark ? .56f : .39f;
-        material.saturation = 1.08f;
+        material = popupGlass(1, 1, 1, .024);
+        material.blurSigma = 7.5f;
+        material.saturation = 1.62f;
+        material.shadowLift = .12f;
+        material.highlightRollOff = .54f;
+        material.bevel = 10;
+        material.depth = 10;
+        material.displacement = 12;
+        material.chroma = .015f;
+        material.rim = .76f;
+        material.rimWrap = .68f;
+        material.lenses = open.controlCenter->glassLenses();
     }
     window->setBackgroundBlur(base::Rect(0, 0, open.geometry.width(), height),
                               int(panel::kPanelRadius), material, shape);

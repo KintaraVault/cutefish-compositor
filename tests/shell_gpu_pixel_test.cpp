@@ -257,4 +257,32 @@ TEST_P(ShellGpuPixels, APopupGrowingInItsOwnFrameShowsItsNewSizeInThatFrame)
     popup.reset();
 }
 
+TEST_P(ShellGpuPixels, SeparateGlassLensesShareTheBackdropAndKeepTheirGutterClear)
+{
+    const base::Rect bounds {50, 40, 180, 60};
+    ui::Path mask;
+    mask.addRoundedRect({50, 40, 60, 60}, 30, 30);
+    mask.addRoundedRect({170, 40, 60, 60}, 30, 30);
+    GlassParams glass;
+    glass.enabled = true;
+    glass.tintAlpha = .25f;
+    glass.lenses = {{{0, 0, 60, 60}, 30}, {{120, 0, 60, 60}, 30, .75f, .5f}};
+
+    renderer->setOutputContext({"out", kOutput, native, scale(), 0, ++frameCount});
+    ASSERT_TRUE(renderer->beginFrame(target.get()));
+    const auto image = renderer->captureFrame([&] {
+        renderer->clear({0, 0, 0, 1});
+        renderer->drawBackgroundBlur(bounds, 30, bounds, glass, mask);
+    }).converted(ui::Bitmap::Format::Rgba8888Premultiplied);
+    renderer->cancelFrame();
+    ASSERT_FALSE(image.isNull());
+    EXPECT_EQ(0xff000000u, pixelAt(image, {140, 70})); // unfiltered gutter
+    EXPECT_EQ(0xff000000u, pixelAt(image, {52, 42})); // rounded corner
+    const auto left = pixelAt(image, {80, 70});
+    const auto right = pixelAt(image, {200, 70});
+    EXPECT_GT(left, 0xff000000u);
+    EXPECT_GT(right, left); // .75 tint at .5 opacity, versus .25 at full opacity
+    EXPECT_LT(right, 0xffc0c0c0u);
+}
+
 INSTANTIATE_TEST_SUITE_P(Scales, ShellGpuPixels, testing::Values(1.0, 1.5));

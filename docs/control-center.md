@@ -21,8 +21,25 @@ Pages, control positions and visibility preferences are stored in
 `desktop-widgets.conf`. Both use the compositor's normal per-user preferences
 directory.
 
-The interface uses the compositor's native glass. The wallpaper shows through
-the plates; their tints follow the system appearance. Animations approximate
-the supplied footage, which does not specify easing curves or durations.
+The interface uses the compositor's native glass. Each tile refracts the same
+backdrop independently; the gaps between tiles show the unfiltered wallpaper.
+The center, catalog and desktop widgets use separate neutral material settings,
+so the wallpaper supplies their hue. Animations approximate the supplied footage,
+which does not specify easing curves or durations.
 Controls that have no corresponding system service (such as AirDrop and Home)
 are available as catalog entries but explicitly marked unavailable in use.
+
+## Isolated reference captures
+
+Build the `controlcenter_test` target with `BUILD_TESTING=ON`. The optional EGL
+capture test writes 1920×1080 PNGs without connecting to the running desktop:
+
+```sh
+env -u DISPLAY -u WAYLAND_DISPLAY CUTEFISH_TAHOE_PREVIEW=/tmp/tahoe \
+  dbus-run-session -- build/tests/shell/controlcenter_test \
+  --gtest_filter='*OffscreenReferenceFrames'
+```
+
+Set `CUTEFISH_TAHOE_WALLPAPER` to a reference backdrop for panel comparisons.
+Omit it to render widgets over a neutral test wallpaper without reference UI
+baked into the image.

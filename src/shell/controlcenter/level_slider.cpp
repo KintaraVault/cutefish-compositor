@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "shell/controlcenter/level_slider.h"
+#include "ui/painter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -87,7 +88,18 @@ double LevelSlider::position() const
 
 void LevelSlider::setIcon(std::string file)
 {
+    m_icon = file;
     m_track->setIcon(std::move(file));
+    if (m_controlStyle)
+        requestPaint();
+}
+
+void LevelSlider::setControlStyle(bool controlStyle, bool audio)
+{
+    m_controlStyle = controlStyle;
+    m_audio = audio;
+    m_track->setVisible(!controlStyle);
+    requestPaint();
 }
 
 void LevelSlider::setVisualValue(double value)
@@ -96,6 +108,8 @@ void LevelSlider::setVisualValue(double value)
     // Only wheel steps glide; a drag and the service's values snap.
     m_track->setAnimated(m_gliding && !m_pressed);
     m_track->setPosition(position());
+    if (m_controlStyle)
+        requestPaint();
 }
 
 void LevelSlider::setFromFraction(double fraction)
@@ -125,9 +139,28 @@ void LevelSlider::wheel(const ui::ScrollEvent &event)
 
 void LevelSlider::dragTo(double x)
 {
+    if (m_controlStyle) {
+        setFromFraction((x - 23) / std::max(1., geometry().width - (m_audio ? 98. : 46.)));
+        return;
+    }
     const double travel = geometry().width - geometry().height;
     if (travel > 0)
         setFromFraction((x - geometry().height / 2) / travel);
+}
+
+void LevelSlider::paint(ui::Painter &painter)
+{
+    if (!m_controlStyle)
+        return;
+    const auto white = ui::Color::rgb(0xffffff);
+    const double y = geometry().height / 2;
+    const double width = std::max(0., geometry().width - (m_audio ? 98. : 46.));
+    painter.fillRoundedRect({23, y - 2.5, width, 5}, 2.5, ui::Color {0, 0, 0, 38});
+    painter.fillRoundedRect({23, y - 2.5, width * position(), 5}, 2.5, white);
+    if (!m_icon.empty())
+        painter.drawSvg(m_icon, {0, y - 8, 16, 16}, white);
+    const auto end = panel::artwork(m_audio ? "audio-volume-high-symbolic" : "brightness", true);
+    painter.drawSvg(end, {geometry().width - (m_audio ? 69 : 16), y - 9, 18, 18}, white);
 }
 
 void LevelSlider::layout()
@@ -179,6 +212,12 @@ void TileSlider::setTitle(std::string title)
     requestLayout();
 }
 
+void TileSlider::setControlStyle(bool controlStyle)
+{
+    m_controlStyle = controlStyle;
+    m_slider->setControlStyle(controlStyle, m_hasDetail);
+}
+
 void TileSlider::setHasDetail(bool detail)
 {
     if (detail == m_hasDetail)
@@ -205,6 +244,21 @@ ui::SizeF TileSlider::sizeHint() const
 
 void TileSlider::layout()
 {
+    if (m_controlStyle) {
+        const auto white = ui::Color::rgb(0xffffff);
+        const double w = geometry().width;
+        m_title->setColor(white);
+        m_title->setWeight(600);
+        m_title->setFontSize(16);
+        m_title->setGeometry({20, 10, std::max(0., w - 40), 26});
+        m_slider->setControlStyle(true, m_hasDetail);
+        m_slider->setGeometry({20, geometry().height - 39, std::max(0., w - 40), 22});
+        if (m_hasDetail) {
+            m_chevron->setColor(white);
+            m_chevron->setGeometry({w - 43, geometry().height - 44, 20, 32});
+        }
+        return;
+    }
     const double padding = ui::Theme::current().largeSpacing;
     const double spacing = ui::Theme::current().smallSpacing;
     const double scale = windowScale(this);
@@ -230,6 +284,14 @@ void TileSlider::paint(ui::Painter &painter)
 {
     if (!m_controlStyle)
         panel::paintTile(painter, localRect());
+    else if (m_hasDetail) {
+        const auto white = ui::Color::rgb(0xffffff);
+        const auto y = geometry().height - 28;
+        const auto x = geometry().width - 35;
+        painter.fillRoundedRect({x - 17, y - 17, 34, 34}, 17, white.withAlpha(.16));
+        painter.strokeRoundedRect({x - 7, y - 7, 14, 14}, 7, white.withAlpha(.78));
+        painter.strokeRoundedRect({x - 4, y - 4, 8, 8}, 4, white.withAlpha(.78));
+    }
 }
 
 void TileSlider::hoverChanged()

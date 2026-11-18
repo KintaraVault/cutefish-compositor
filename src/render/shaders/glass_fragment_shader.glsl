@@ -18,11 +18,15 @@ uniform vec2 uAmbient;
 uniform float uSaturation;
 // Intensity, and one logical pixel in device pixels.
 uniform vec2 uRim;
+uniform float uRimWrap;
 uniform vec4 uTint;
+uniform vec2 uTone;
 // The lens within the quad, in device pixels; a client shape masks the quad.
 uniform vec4 uLens;
 uniform sampler2D uShape;
 uniform float uHasShape;
+uniform vec4 uShapeRect;
+uniform float uOpacity;
 
 float roundRect(vec2 p, vec2 halfSize, float r) {
     return roundedDistance(p, vec4(-halfSize, halfSize * 2.0), vec2(r));
@@ -121,6 +125,8 @@ void shade() {
     float luma = dot(refracted, vec3(0.2126, 0.7152, 0.0722));
     refracted = max(mix(vec3(luma), refracted, uSaturation), 0.0);
     vec3 color = mix(refracted, uTint.rgb, uTint.a);
+    color = mix(color, vec3(1.0), uTone.x * (1.0 - smoothstep(0.015, 0.34, luma)));
+    color *= 1.0 - uTone.y * smoothstep(0.36, 0.94, luma);
     // The glass body blocks light near its edge, which is what anchors it on a
     // backdrop too bright for the refraction to show.
     float occluded = 1.0 - smoothstep(0.0, max(uAmbient.y, 0.001), -sd);
@@ -147,7 +153,7 @@ void shade() {
     if (uRim.x > 0.0) {
         vec2 outward = outwardAt(insideLens(p, halfSize, r), halfSize, r);
         // Surface-local y grows downwards, so the top faces -y.
-        float lit = abs(outward.y) * mix(1.0, 0.35, 0.5 + 0.5 * outward.y);
+        float lit = mix(uRimWrap, 1.0, abs(outward.y)) * mix(1.0, mix(0.35, 0.77, uRimWrap), 0.5 + 0.5 * outward.y);
         float inset = -sd;
         // Three quarters and half a logical pixel, never thinner than a device pixel.
         float litWidth = max(0.75 * uRim.y, 1.0);
@@ -176,6 +182,6 @@ void shade() {
     // result, so the lens does not antialias its own silhouette: that shape is
     // curved, and a one pixel ramp off the distance field visibly stairsteps
     // where the outline next to it does not.
-    float mask = mix(1.0, texture2D(uShape, vTexCoord).a, uHasShape);
-    gl_FragColor = vec4(max(color, vec3(0.0)), 1.0) * mask;
+    float mask = mix(1.0, texture2D(uShape, uShapeRect.xy + vTexCoord * uShapeRect.zw).a, uHasShape);
+    gl_FragColor = vec4(max(color, vec3(0.0)), 1.0) * mask * uOpacity;
 }

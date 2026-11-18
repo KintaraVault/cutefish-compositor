@@ -224,8 +224,7 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
     glUniform1f(uniform("uSaturation"), std::max(glass.saturation, 0.0f));
     // The shader derives the hairline widths from one logical pixel.
     glUniform2f(uniform("uRim"), std::clamp(glass.rim, 0.0f, 1.0f), std::max(1.0f, float(scale)));
-    glUniform4f(uniform("uTint"), glass.tintRed, glass.tintGreen, glass.tintBlue,
-                std::clamp(glass.tintAlpha, 0.0f, 1.0f));
+    glUniform1f(uniform("uRimWrap"), std::clamp(glass.rimWrap, 0.0f, 1.0f));
 }
 
 bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, const base::Rect &coverage,
@@ -619,17 +618,9 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
     applyRoundedClip(program);
     const float u = float(used.width());
     const float v = float(used.height());
-    glUniform4f(program.uniform("uSampleRect"),
-                float(bounds.x() - coverage.x()) / coverage.width() * u,
-                float(bounds.y() - coverage.y()) / coverage.height() * v,
-                float(bounds.width()) / coverage.width() * u,
-                float(bounds.height()) / coverage.height() * v);
     setGaussianClamp(program, texels, allocated);
-    glUniform2f(program.uniform("uSize"), bounds.width(), bounds.height());
-    glUniform1f(program.uniform("uRadius"),
-                std::clamp(radius, 0, std::min(lens.width(), lens.height()) / 2));
+    glUniform1f(program.uniform("uOpacity"), std::clamp(glass.opacity, 0.0f, 1.0f));
     if (!glass.enabled) {
-        glUniform1f(program.uniform("uOpacity"), std::clamp(glass.opacity, 0.0f, 1.0f));
         glUniform4f(program.uniform("uFillTint"), glass.fillTint[0], glass.fillTint[1], glass.fillTint[2],
                     glass.fillTint[3]);
         glUniform1f(program.uniform("uFillMode"), float(glass.fillMode));
@@ -639,8 +630,6 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
     if (glass.enabled) {
         applyGlassMaterial(program, glass, coverage.size(), scale);
         glUniform2f(program.uniform("uBackdropSize"), reduced.width(), reduced.height());
-        glUniform4f(program.uniform("uLens"), lens.x() - bounds.x(), lens.y() - bounds.y(),
-                    lens.width(), lens.height());
     }
     glUniform1f(program.uniform("uHasShape"), shaped ? 1 : 0);
     if (shaped) {
@@ -655,7 +644,42 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
     }
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    drawQuad(program, result.get(), bounds, false);
+    const auto drawLens = [&](const base::Rect &quad, const base::RectF &body, double r, float tint, float opacity) {
+        glUniform4f(program.uniform("uSampleRect"),
+                    float(quad.x() - coverage.x()) / coverage.width() * u,
+                    float(quad.y() - coverage.y()) / coverage.height() * v,
+                    float(quad.width()) / coverage.width() * u,
+                    float(quad.height()) / coverage.height() * v);
+        glUniform2f(program.uniform("uSize"), quad.width(), quad.height());
+        glUniform1f(program.uniform("uRadius"),
+                    std::clamp(r, 0., std::min(body.width(), body.height()) / 2));
+        if (glass.enabled) {
+            glUniform1f(program.uniform("uOpacity"), std::clamp(glass.opacity * opacity, 0.0f, 1.0f));
+            glUniform4f(program.uniform("uLens"), body.x() - quad.x(), body.y() - quad.y(),
+                        body.width(), body.height());
+            glUniform4f(program.uniform("uShapeRect"),
+                        float(quad.x() - bounds.x()) / bounds.width(),
+                        float(quad.y() - bounds.y()) / bounds.height(),
+                        float(quad.width()) / bounds.width(), float(quad.height()) / bounds.height());
+            glUniform4f(program.uniform("uTint"), glass.tintRed, glass.tintGreen, glass.tintBlue,
+                        std::clamp(tint < 0 ? glass.tintAlpha : tint, 0.0f, 1.0f));
+            glUniform2f(program.uniform("uTone"), tint < 0 ? glass.shadowLift : 0,
+                        tint < 0 ? glass.highlightRollOff : 0);
+        }
+        drawQuad(program, result.get(), quad, false);
+    };
+    if (glass.enabled && shaped && !glass.lenses.empty()) {
+        // All pieces sample the same backdrop, not their already-shaded neighbours.
+        // The union mask also clips the scrolling grid without moving the lenses.
+        for (const auto &piece : glass.lenses) {
+            const auto body = piece.bounds.scaled(scale).translated(exactLens.topLeft());
+            const auto quad = body.toEnclosingRect().intersected(bounds);
+            if (piece.opacity > 0 && !quad.isEmpty() && scissor.intersects(target.framebufferRect(quad)))
+                drawLens(quad, body, piece.radius * scale, piece.tintAlpha, piece.opacity);
+        }
+    } else {
+        drawLens(bounds, base::RectF(lens), radius, -1, 1);
+    }
     glDisable(GL_BLEND);
     if (shaped) {
         glActiveTexture(GL_TEXTURE1);

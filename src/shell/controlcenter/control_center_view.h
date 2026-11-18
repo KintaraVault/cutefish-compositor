@@ -10,6 +10,7 @@
 #include <optional>
 #include <unordered_map>
 
+#include "render/glass.h"
 #include "shell/controlcenter/control_layout.h"
 #include "ui/path.h"
 #include "ui/view.h"
@@ -30,7 +31,7 @@ class TileSlider;
 class ControlCenterView : public ui::View
 {
 public:
-    static constexpr double kWidth = 382;
+    static constexpr double kWidth = 394;
     struct State {
         bool available = false;
         bool active = false;
@@ -49,6 +50,7 @@ public:
     double windowHeight(double scale) const;
     double windowWidth() const;
     ui::Path glassShape() const;
+    std::vector<render::GlassLens> glassLenses() const;
     const std::vector<ui::RectF> &glassTiles() const { return m_glassTiles; }
     bool editing() const;
     bool escapeEditor();

@@ -983,6 +983,11 @@ void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sampl
                 glass.ambientOcclusionRadius *= float(scale);
                 glass.plainSigma *= float(scale);
                 glass.opacity *= value.opacity;
+                for (auto &lens : glass.lenses) {
+                    lens.bounds = {lens.bounds.x() * sx, lens.bounds.y() * sy,
+                                   lens.bounds.width() * sx, lens.bounds.height() * sy};
+                    lens.radius *= scale;
+                }
                 const ui::Path &shape = surface->backgroundBlurShape();
                 renderer.drawBackgroundBlur(
                         transform.mapRect(base::RectF(surface->backgroundBlurRect().translated(

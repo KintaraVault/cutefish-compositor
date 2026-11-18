@@ -15,6 +15,7 @@
 #include "shell/controlcenter/control_center.h"
 #include "shell/controlcenter/control_paint.h"
 #include "shell/controlcenter/panel_style.h"
+#include "shell/shell_data.h"
 #include "shell/shell_window.h"
 #include "ui/animation.h"
 #include "ui/embedded_window.h"
@@ -32,11 +33,27 @@ constexpr int kSize = 214;
 constexpr int kGap = 21;
 constexpr int kWideSize = kSize * 2 + kGap;
 constexpr int kRadius = 34;
-constexpr base::Point kOrigin {112, 82};
+constexpr base::Point kOrigin {112, 88};
 constexpr size_t kMaximumWidgets = 18;
 
 ui::Color accent() { return ui::Theme::current().highlight; }
-ui::Color ink(double alpha = 1) { return panel::textColor(alpha); }
+ui::Color ink(double alpha = 1) { return ui::Color::rgb(0xffffff).withAlpha(alpha); }
+
+render::GlassParams widgetGlass()
+{
+    auto glass = popupGlass(1, 1, 1, .13);
+    glass.blurSigma = 14;
+    glass.saturation = 1.10f;
+    glass.shadowLift = .12f;
+    glass.highlightRollOff = .56f;
+    glass.bevel = 15;
+    glass.depth = 13;
+    glass.displacement = 14;
+    glass.chroma = .012f;
+    glass.rim = .53f;
+    glass.rimWrap = .65f;
+    return glass;
+}
 
 std::tm localTime()
 {
@@ -98,7 +115,20 @@ public:
                     const double trimmed = std::min(edge, d + 19);
                     painter.drawLine(point(trimmed - (i % 5 ? 4 : 7)), point(trimmed), ink(i % 5 ? .16 : .28), 1.15);
                 }
-                text(painter, inset(rect, 12), date(tm, "%H:%M"), rect.width * .278, ink(.94), true, true);
+                const auto clock = date(tm, "%H:%M");
+                ui::FontSpec font {"Nimbus Sans Narrow", rect.width * .355, true};
+                const ui::FontMetrics metrics(font, painter.scale());
+                const double width = rect.width - 36;
+                const double advance = metrics.horizontalAdvanceF(clock);
+                if (advance > width)
+                    font.pointSize *= width / advance;
+                ui::TextLayout line(clock, font, painter.scale());
+                line.setDefaultColor(ink(.55));
+                line.beginLayout();
+                line.createLine(rect.width, {});
+                line.endLayout();
+                const auto &info = line.lineAt(0);
+                line.draw(painter, {c.x - info.naturalTextWidth / 2, c.y - (info.ascent + info.descent) / 2});
                 return;
             }
             const ui::PointF c {rect.x + featureWidth / 2, rect.y + rect.height / 2};
@@ -172,7 +202,7 @@ public:
             circle.addEllipse(ring);
             painter.strokePath(circle, ink(.15), 6);
             if (charge > 0) {
-                const auto tint = ui::Color::rgb(charge <= 20 ? 0xE74245 : 0x38A565);
+                const auto tint = charge <= 20 ? ui::Color::rgb(0xff787e) : ink(.94);
                 ui::Path arc;
                 arc.arcTo(ring, 90, -std::clamp(charge, 0, 100) * 3.6);
                 painter.strokePath(arc, tint, 6);
@@ -182,7 +212,7 @@ public:
             painter.drawLine({screen.x - 3, screen.bottom() + 2}, {screen.right() + 3, screen.bottom() + 2}, ink(.77), 1.5);
             text(painter, {rect.x + (wide ? 8 : 16), rect.bottom() - rect.height * .42,
                            featureWidth - 24, rect.height * .38}, charge < 0 ? "—" : std::to_string(charge) + "%",
-                 rect.height * (wide ? .139 : .193), ink(.95), false, wide);
+                 rect.height * (wide ? .139 : .209), ink(.78), false, wide);
             const std::string status = charge < 0 ? tr("No Battery") : discharging ? tr("On Battery") : tr("Plugged In");
             if (wide)
                 text(painter, {rect.x + featureWidth, rect.y, rect.width - featureWidth - 14, rect.height}, status, 12, ink(), true);
@@ -453,8 +483,7 @@ void DesktopWidgets::updateOutput()
                 item->window->hide();
         return;
     }
-    auto material = panel::panelGlass();
-    material.tintAlpha = panel::dark() ? .57f : .45f;
+    const auto material = widgetGlass();
     for (auto &item : m_widgets) {
         if (!item->window) {
             item->window = std::make_unique<ShellWindow>(m_shell, wm::WindowRole::DesktopWidget, false);
@@ -477,7 +506,10 @@ void DesktopWidgets::updateOutput()
         const int h = std::min(293, r.height() - 24);
         m_gallery->setOutput(output->name);
         m_gallery->setGeometry({r.x() + (r.width() - w) / 2, r.bottom() - h - 12, w, h});
-        m_gallery->setBackgroundBlur({0, 0, w, h}, kRadius, panel::panelGlass());
+        auto galleryGlass = widgetGlass();
+        galleryGlass.tintAlpha = .16f;
+        galleryGlass.highlightRollOff = .73f;
+        m_gallery->setBackgroundBlur({0, 0, w, h}, kRadius, galleryGlass);
     }
 }
 

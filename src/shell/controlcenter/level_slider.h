@@ -40,6 +40,7 @@ public:
     double position() const;
     // Artwork for the track's cap: the light variant in either theme.
     void setIcon(std::string file);
+    void setControlStyle(bool controlStyle, bool audio = false);
 
     // A wheel or touchpad turn, also from the tile around the slider.
     void wheel(const ui::ScrollEvent &event);
@@ -51,6 +52,7 @@ public:
 
 protected:
     void layout() override;
+    void paint(ui::Painter &painter) override;
     void pointerPress(const ui::PointerEvent &event) override;
     void pointerMove(const ui::PointerEvent &event) override;
     void pointerRelease(const ui::PointerEvent &event) override;
@@ -62,6 +64,9 @@ private:
     void setVisualValue(double value);
 
     LevelTrack *m_track;
+    std::string m_icon;
+    bool m_controlStyle = false;
+    bool m_audio = false;
     double m_from = 0;
     double m_to = 1;
     double m_stepSize = 0;
@@ -81,7 +86,7 @@ class TileSlider : public ui::View
 {
 public:
     explicit TileSlider(std::string title);
-    void setControlStyle(bool controlStyle) { m_controlStyle = controlStyle; }
+    void setControlStyle(bool controlStyle);
 
     LevelSlider *slider() const { return m_slider; }
     void setTitle(std::string title);

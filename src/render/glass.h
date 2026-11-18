@@ -6,8 +6,22 @@
 #define CUTEFISH_RENDER_GLASS_H_
 
 #include <algorithm>
+#include <vector>
+
+#include "base/geometry.h"
 
 namespace cutefish::render {
+
+// Separate lenses over one filtered backdrop, positioned relative to the blur
+// rectangle. The surface's path still defines their combined coverage.
+struct GlassLens {
+    base::RectF bounds;
+    double radius = 0;
+    float tintAlpha = -1; // inherit the material tint when negative
+    float opacity = 1;
+
+    bool operator==(const GlassLens &) const = default;
+};
 
 // The glass effect material. The backdrop is softened, refracted through
 // a rounded superellipse lens, tinted, then lit. Lengths are logical pixels and
@@ -63,11 +77,16 @@ struct GlassParams {
     // bottom and shaded along the sides; when set it replaces the window
     // outline, which would otherwise stack on it.
     float rim = 0.0f;
+    float rimWrap = 0.0f; // minimum highlight around the sides of a lens
     float tintRed = 1.0f;
     float tintGreen = 1.0f;
     float tintBlue = 1.0f;
     float tintAlpha = 0.12f;
-    // The plain blur's own opacity, for one that fades with what it sits under.
+    // Preserve white ink over a wide range of wallpaper luminance: the
+    // neutral tint lifts deep shadows and gently rolls off bright areas.
+    float shadowLift = 0.0f;
+    float highlightRollOff = 0.0f;
+    // Opacity of the filtered backdrop, independent of foreground content.
     float opacity = 1.0f;
     // The plain blur's sigma, smaller for a window drawn smaller.
     float plainSigma = 30.0f;
@@ -81,6 +100,8 @@ struct GlassParams {
     // Reads its backdrop even while setOpaqueBackdrop() is set. The shell's
     // own; the wire protocol never sets it.
     bool ignoresOpaqueBackdrop = false;
+    // Internal shell geometry; not sent over the Wayland glass protocol.
+    std::vector<GlassLens> lenses;
 };
 
 // How a plain blur's fill colour blends over the tinted backdrop, as the
@@ -114,10 +135,13 @@ inline bool operator==(const GlassParams &a, const GlassParams &b)
             && a.shininess == b.shininess && a.sheen == b.sheen
             && a.ambientOcclusion == b.ambientOcclusion
             && a.ambientOcclusionRadius == b.ambientOcclusionRadius
-            && a.saturation == b.saturation && a.rim == b.rim && a.tintRed == b.tintRed
+            && a.saturation == b.saturation && a.rim == b.rim && a.rimWrap == b.rimWrap
+            && a.tintRed == b.tintRed
             && a.tintGreen == b.tintGreen && a.tintBlue == b.tintBlue && a.tintAlpha == b.tintAlpha
+            && a.shadowLift == b.shadowLift && a.highlightRollOff == b.highlightRollOff
             && a.opacity == b.opacity && a.plainSigma == b.plainSigma && a.fillMode == b.fillMode
             && a.ignoresOpaqueBackdrop == b.ignoresOpaqueBackdrop
+            && a.lenses == b.lenses
             && std::equal(a.fillTint, a.fillTint + 4, b.fillTint)
             && std::equal(a.fillColor, a.fillColor + 4, b.fillColor);
 }

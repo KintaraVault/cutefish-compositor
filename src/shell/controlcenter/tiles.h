@@ -193,8 +193,7 @@ private:
     bool m_controlStyle = false;
 };
 
-// The applications behind the bar's privacy dot, one sentence each, in a
-// tile above the cards.
+// The applications behind the bar's privacy dot, with one compact row per app.
 class DeviceUsersTile : public ui::View
 {
 public:
@@ -204,11 +203,10 @@ public:
 
     void setUsers(const std::vector<DeviceUser> &users);
     const std::vector<DeviceUser> &users() const { return m_users; }
-    // Takes the sentences again after the session language changed.
     void retranslate();
 
     double heightForWidth(double width) const override;
-    ui::SizeF sizeHint() const override { return {0, heightForWidth(0)}; }
+    ui::SizeF sizeHint() const override;
 
 protected:
     void layout() override;
@@ -216,14 +214,8 @@ protected:
 
 private:
     struct Row {
-        ui::View *icon;
-        ui::Label *sentence;
-        ui::Color dot;
+        ui::Label *title;
     };
-
-    double sentenceWidth(double width) const;
-    double rowHeight(const Row &row, double width) const;
-    double inset() const;
 
     std::vector<DeviceUser> m_users;
     std::vector<Row> m_rows;

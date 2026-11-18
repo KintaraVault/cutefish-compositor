@@ -24,12 +24,20 @@ using i18n::tr;
 using namespace std::chrono_literals;
 
 constexpr double kInset = 6;
-constexpr double kCatalogGap = 28;
-constexpr double kFooter = 48;
-constexpr double kEditorHeader = 52;
+constexpr double kTop = 12;
+constexpr double kCatalogGap = -1;
+constexpr double kFooter = 57;
+constexpr double kEditorHeader = 68;
 constexpr ui::Color kGreen {42, 157, 75, 255};
+constexpr auto kCanvasInk = ui::Color::rgb(0xffffff);
+constexpr auto kCatalogInk = ui::Color::rgb(0x171622);
 
-double radius(const ui::RectF &rect) { return rect.width == rect.height && rect.width < 105 ? rect.height / 2 : 25; }
+double radius(const ui::RectF &r)
+{
+    if (r.width > 3 * r.height)
+        return r.height * .32;
+    return r.height < 105 ? r.height / 2 : r.height * .24;
+}
 
 std::string folded(const std::string &text)
 {
@@ -75,11 +83,12 @@ void glyph(ui::Painter &painter, const controls::Definition &def, ui::RectF rect
 void preview(ui::Painter &painter, const controls::Definition &def, Size size, const ui::RectF &r,
              bool dragging = false)
 {
-    const auto ink = panel::textColor();
-    const auto fill = panel::dark() ? ui::Color {55, 55, 58, 230} : ui::Color {255, 255, 255, 218};
+    const auto ink = kCanvasInk;
+    const auto fill = dragging ? ui::Color {79, 79, 79, 240} : ui::Color {0, 0, 0, 57};
     if (dragging)
         painter.drawShadow(r, radius(r), 12, ui::Color {0, 0, 0, 100}, {0, 6});
     painter.fillRoundedRect(r, radius(r), fill);
+    painter.strokeRoundedRect(inset(r, .5), radius(r) - .5, kCanvasInk.withAlpha(.29));
     if (def.id == "media" && size == Size::Large) {
         painter.fillRoundedRect({r.x + 12, r.y + 12, 36, 36}, 8, panel::textColor(.13));
         text(painter, {r.x + 13, r.bottom() - 64, r.width - 26, 20}, tr("Not Playing"), 9, ink, true);
@@ -93,10 +102,11 @@ void preview(ui::Painter &painter, const controls::Definition &def, Size size, c
         painter.fillRoundedRect({track.x, track.y, track.width * .53, track.height}, 9, panel::textColor(.65));
     } else {
         const bool large = size == Size::Large;
-        const ui::RectF plate {r.x + 12, large ? r.y + 13 : center(r).y - 17, 34, 34};
-        painter.fillRoundedRect(plate, 17, panel::textColor(.09));
-        glyph(painter, def, centered(plate, 20), ink);
-        const double x = large ? r.x + 13 : r.x + 52;
+        const ui::RectF plate {r.x + 17, large ? r.y + 17 : center(r).y - 23, 46, 46};
+        const bool network = std::string_view(def.category) == "Connectivity";
+        painter.fillRoundedRect(plate, 23, network ? ui::Color::rgb(0x087cf4) : ink.withAlpha(.13));
+        glyph(painter, def, centered(plate, 25), ink);
+        const double x = large ? r.x + 17 : r.x + 73;
         text(painter, {x, large ? r.bottom() - 44 : r.y, r.right() - x - 9, large ? 34.0 : r.height},
              tr(def.title), 10, ink, true);
     }
@@ -123,6 +133,11 @@ public:
     {
         setTracksHover(true);
         search = addChild<ui::SearchField>(tr("Search Controls"));
+        search->setFill(ui::ColorRecipe(kCanvasInk));
+        search->setGlyphColor(ui::ColorRecipe(kCatalogInk));
+        search->setTextColor(ui::ColorRecipe(kCatalogInk));
+        search->setPlaceholderColor(ui::ColorRecipe(kCatalogInk.withAlpha(.74)));
+        search->setFontSize(15);
         search->setName("control-search");
         search->setVisible(false);
         search->onTextChanged = [this] { galleryScroll = 0; focusedPreview = 0; requestPaint(); };
@@ -158,19 +173,19 @@ protected:
         const auto r = v.catalogRect();
         search->setVisible(editing);
         if (editing) {
-            search->setGeometry({r.x + 14, r.y + 16, sidebarWidth() - 28, 34});
+            search->setGeometry({r.x + 26, r.y + 26, sidebarWidth() - 52, 37});
             search->setOpacity(v.m_catalogReveal);
         }
     }
 
     void paint(ui::Painter &painter) override
     {
-        const auto ink = panel::textColor();
+        const auto ink = kCanvasInk;
         const auto footer = editing ? v.editRect() : localRect();
         if (!editing) {
             if (contains(footer, hover))
-                painter.fillRoundedRect(footer, footer.height / 2, panel::textColor(.10));
-            text(painter, footer, tr("Edit Controls"), 9.5, ink, true, true);
+                painter.fillRoundedRect(footer, footer.height / 2, ink.withAlpha(.10));
+            text(painter, footer, tr("Edit Controls"), 11, ink, false, true);
             return;
         }
 
@@ -183,16 +198,14 @@ protected:
                     }))
                     continue;
                 const auto rect = v.tileRect(Size::Small, {x, y});
-                painter.fillRoundedRect(rect, rect.height / 2, panel::textColor(.10));
-                painter.strokeRoundedRect(inset(rect, .7), rect.height / 2, panel::textColor(.18));
+                painter.fillRoundedRect(rect, rect.height / 2, ink.withAlpha(.22));
             }
         }
         for (const Tile &tile : v.page().tiles) {
             if (dragging && held && held->id == tile.id)
                 continue;
             const auto minus = minusRect(tile);
-            const ui::Color background = panel::dark() ? ui::Color::rgb(0x525256) : ui::Color::rgb(0xDDDEE1);
-            sign(painter, minus, false, contains(minus, hover) ? panel::shade(background, .12) : background, ink);
+            sign(painter, minus, false, contains(minus, hover) ? ui::Color::rgb(0xd8dcef) : ui::Color::rgb(0xbac0d8), kCatalogInk);
         }
         if (target && held) {
             const auto r = v.tileRect(held->size, *target);
@@ -202,23 +215,23 @@ protected:
         }
         painter.restore();
 
+        text(painter, {v.canvasX() + 24, kTop, 62, 52}, tr("Icon:"), 11, ink.withAlpha(.54));
         for (size_t i = 0; i < controls::pageIcons().size(); ++i) {
             const auto r = iconRect(i);
             const bool checked = v.page().icon == controls::pageIcons()[i];
             if (checked || contains(r, hover))
-                painter.fillRoundedRect(r, 17, panel::textColor(checked ? .16 : .07));
-            pageGlyph(painter, int(i), r, ink);
+                painter.fillRoundedRect(r, 22, ink.withAlpha(checked ? .36 : .12));
+            pageGlyph(painter, int(i), r, ink.withAlpha(checked ? .95 : .62));
         }
         if (v.m_model.pages().size() > 1) {
             for (size_t i = 0; i < v.m_model.pages().size(); ++i) {
                 const auto r = pageRect(i);
                 const bool selected = v.m_model.pages()[i].id == v.m_page;
-                painter.fillRoundedRect(r, 11, panel::textColor(selected ? .23 : .08));
+                painter.fillRoundedRect(r, 11, ink.withAlpha(selected ? .23 : .08));
                 text(painter, r, std::to_string(i + 1), 8, ink, selected, true);
             }
         }
-        painter.fillRoundedRect(footer, footer.height / 2, panel::textColor(.11));
-        text(painter, footer, tr("Done"), 9.5, ink, true, true);
+        text(painter, footer, tr("Done"), 11, ink, true, true);
         paintGallery(painter);
 
         if (dragging && held) {
@@ -378,11 +391,11 @@ protected:
 private:
     struct Preview { const controls::Definition *def; Size size; ui::RectF rect; };
 
-    double sidebarWidth() const { return std::clamp(v.catalogWidth() * .29, 118.0, 258.0); }
+    double sidebarWidth() const { return std::clamp(v.catalogWidth() / 3, 118.0, 321.0); }
     ui::RectF sidebarClip() const
     {
         const auto r = v.catalogRect();
-        return {r.x + 8, r.y + 59, sidebarWidth() - 16, std::max(0.0, r.height - 67)};
+        return {r.x + 23, r.y + 76, sidebarWidth() - 46, std::max(0.0, r.height - 82)};
     }
     ui::RectF galleryClip() const
     {
@@ -391,7 +404,8 @@ private:
     }
     ui::RectF iconRect(size_t i) const
     {
-        return {v.canvasX() + (v.canvasWidth() - 5 * 42) / 2 + 42 * i, 5, 38, 34};
+        const double width = (v.canvasWidth() - kInset * 2 - 80) / 5;
+        return {v.canvasX() + kInset + 80 + width * i + 3, kTop + 5, width - 8, 42};
     }
     ui::RectF pageRect(size_t i) const
     {
@@ -480,13 +494,13 @@ private:
     void paintGallery(ui::Painter &painter)
     {
         const auto r = v.catalogRect();
-        const auto ink = panel::textColor();
-        const auto soft = panel::textColor(.64);
+        const auto ink = kCatalogInk;
+        const auto soft = ink.withAlpha(.80);
         painter.save();
         painter.multiplyOpacity(v.m_catalogReveal);
-        painter.clipRoundedRect(r, 24);
-        painter.fillRect({r.x, r.y, sidebarWidth(), r.height}, panel::textColor(.045));
-        painter.fillRect({r.x + sidebarWidth(), r.y, 1, r.height}, panel::textColor(.12));
+        painter.clipRoundedRect(r, 31);
+        painter.fillRect({r.x, r.y, sidebarWidth(), r.height}, kCanvasInk.withAlpha(.045));
+        painter.fillRect({r.x + sidebarWidth(), r.y, 1, r.height}, ink.withAlpha(.16));
 
         categories.clear();
         previews.clear();
@@ -495,23 +509,24 @@ private:
         painter.clip(side);
         double y = side.y - sidebarScroll;
         const auto categoryRow = [&](const std::string &name, size_t index) {
-            const ui::RectF row {side.x + 3, y, side.width - 6, 41};
+            const ui::RectF row {side.x + 3, y, side.width - 6, 60};
             categories.emplace_back(name, row);
             const bool selected = search->text().empty() && name == category;
             if (selected || (contains(row, hover) && contains(side, hover)))
-                painter.fillRoundedRect(row, 8, panel::textColor(selected ? .12 : .06));
+                painter.fillRoundedRect(row, 12, ink.withAlpha(selected ? .19 : .08));
             static const int colors[] = {0x1685F7, 0x7657ED, 0xE75362, 0xF49E22, 0x57AF70, 0x6473ED};
-            const ui::RectF badge {row.x + 8, row.y + 8, 25, 25};
-            painter.fillRoundedRect(badge, 5, ui::Color::rgb(colors[index % 6]));
+            const ui::RectF badge {row.x + 13, row.y + 13, 34, 34};
             if (name.empty())
-                pageGlyph(painter, 0, badge, ui::Color::rgb(0xFFFFFF));
+                pageGlyph(painter, 0, badge, ink);
             else if (const auto it = std::ranges::find_if(controls::catalog(), [&](const auto &def) {
                          return name == def.category;
-                     }); it != controls::catalog().end())
-                glyph(painter, *it, centered(badge, 15), ui::Color::rgb(0xFFFFFF));
-            text(painter, {row.x + 43, row.y, row.width - 46, row.height}, name.empty() ? tr("All Controls") : tr(name.c_str()),
-                 9.5, ink, selected);
-            y += 43;
+                     }); it != controls::catalog().end()) {
+                painter.fillRoundedRect(badge, 8, ui::Color::rgb(colors[index % 6]));
+                glyph(painter, *it, centered(badge, 21), kCanvasInk);
+            }
+            text(painter, {row.x + 62, row.y, row.width - 66, row.height}, name.empty() ? tr("All Controls") : tr(name.c_str()),
+                 12, ink);
+            y += 60;
         };
         categoryRow({}, 0);
         std::vector<std::string> groups;
@@ -529,18 +544,28 @@ private:
         painter.clip(clip);
         const double left = clip.x + 19;
         const double width = std::max(52.0, clip.width - 36);
-        const double gap = 12;
+        const double gap = 16;
         const int columns = width >= 510 ? 6 : width >= 232 ? 4 : 2;
-        const double unit = std::min(79.0, (width - gap * (columns - 1)) / columns);
-        y = clip.y + 7 - galleryScroll;
+        const double unit = std::min(83.0, (width - gap * (columns - 1)) / columns);
+        y = clip.y + 14 - galleryScroll;
         const auto title = [&](std::string name, double size) {
             text(painter, {left, y, width, 34}, std::move(name), size, ink, true);
             y += 36;
         };
+        const auto addPreviewAt = [&](const controls::Definition *def, ui::RectF rect) {
+            previews.push_back({def, def->initial, rect});
+            if (rect.bottom() + 25 < clip.y || rect.y >= clip.bottom())
+                return;
+            preview(painter, *def, def->initial, rect);
+            text(painter, {rect.x - 4, rect.bottom() + 3, rect.width + 8, 22}, tr(def->title), 10, ink, false, true);
+            const bool selected = previews.size() - 1 == focusedPreview && hasFocus();
+            if (selected || (contains(rect, hover) && contains(clip, hover)))
+                sign(painter, {rect.x - 4, rect.y - 5, 25, 25}, true, kGreen, kCanvasInk);
+        };
         const auto section = [&](const char *heading, const std::vector<const controls::Definition *> &items) {
             if (items.empty())
                 return;
-            painter.fillRect({left, y, width, 1}, panel::textColor(.12));
+            painter.fillRect({left, y, width, 1}, ink.withAlpha(.16));
             title(tr(heading), 11);
             double x = left;
             double height = 0;
@@ -553,15 +578,7 @@ private:
                     x = left;
                     height = 0;
                 }
-                const ui::RectF rect {x, y, w, h};
-                previews.push_back({def, def->initial, rect});
-                if (rect.bottom() + 25 >= clip.y && rect.y < clip.bottom()) {
-                    preview(painter, *def, def->initial, rect);
-                    text(painter, {x - 4, y + h + 3, w + 8, 22}, tr(def->title), 9, ink, false, true);
-                    const bool selected = previews.size() - 1 == focusedPreview && hasFocus();
-                    if (selected || (contains(rect, hover) && contains(clip, hover)))
-                        sign(painter, {rect.x + 1, rect.y + 1, 23, 23}, true, kGreen, ui::Color::rgb(0xFFFFFF));
-                }
+                addPreviewAt(def, {x, y, w, h});
                 height = std::max(height, h);
                 x += w + gap;
             }
@@ -589,15 +606,17 @@ private:
             section(category.c_str(), matching([&](const auto &def) { return category == def.category; }));
         } else {
             const bool artwork = width >= 370;
-            const double height = artwork ? 160 : 99;
+            const double height = artwork ? 221 : 99;
             const double copyWidth = artwork ? width * .52 - 32 : width - 32;
-            painter.fillRoundedRect({left, y, width, height}, 9, panel::textColor(.066));
-            text(painter, {left + 16, y + 13, copyWidth, 28}, tr("What’s New"), 14, ink, true);
-            text(painter, {left + 16, y + 44, copyWidth, 20}, tr("Make Control Center your own."), 9.5, ink);
-            text(painter, {left + 16, y + 65, copyWidth, 20}, tr("Resize, move, and pin controls."), 9, soft);
+            painter.fillRoundedRect({left, y, width, height}, 8, ink.withAlpha(.09));
+            text(painter, {left + 26, y + (artwork ? 36 : 10), copyWidth, 30}, tr("What’s New"), 15, ink, true);
+            const double introY = y + (artwork ? 67 : 42);
+            text(painter, {left + 26, introY, copyWidth, 20}, tr("Make Control Center your own."), 11, ink);
+            text(painter, {left + 26, introY + 22, copyWidth, 20}, tr("Resize, move, and pin controls."), 11, soft);
             if (artwork) {
                 const ui::RectF screen {left + width * .52, y + 17, width * .48 - 16, height - 34};
-                painter.fillRoundedRect(screen, 7, panel::textColor(.09));
+                painter.fillRoundedRect(screen, 5, ui::LinearGradient::vertical(screen,
+                        ui::Color::rgb(0x558f9b), ui::Color::rgb(0x995c82)));
                 painter.fillRoundedRect({screen.x + 3, screen.y + 3, screen.width - 6, 8}, 3, panel::textColor(.17));
                 const double tile = std::min((screen.width - 22) / 11, 13.0);
                 const double x = screen.right() - tile * 4 - 12;
@@ -621,7 +640,29 @@ private:
                 }
             }
             y += height + 13;
-            section("Recommendations", matching([](const auto &def) { return def.recommended; }));
+            if (columns == 6) {
+                title(tr("Recommendations"), 11);
+                const double top = y + 14;
+                const double step = unit + gap;
+                const auto recommendation = [&](const char *id, int column, double dy) {
+                    const auto *def = controls::find(id);
+                    const auto span = controls::footprint(def->initial);
+                    addPreviewAt(def, {left + 8 + step * column, top + dy,
+                                      step * span.width() - gap, step * span.height() - gap});
+                };
+                recommendation("home", 0, 0);
+                recommendation("keyboard", 2, 0);
+                recommendation("clock", 3, 0);
+                recommendation("wifi", 4, 0);
+                recommendation("shortcut", 2, 144);
+                recommendation("media", 4, 157);
+                recommendation("calculator", 0, 270);
+                recommendation("note", 1, 270);
+                recommendation("recognize", 2, 270);
+                y = top + 427;
+            } else {
+                section("Recommendations", matching([](const auto &def) { return def.recommended; }));
+            }
             for (const auto &group : groups)
                 section(group.c_str(), matching([&](const auto &def) { return group == def.category; }));
         }
@@ -667,18 +708,18 @@ double ControlCenterView::canvasWidth() const
 
 double ControlCenterView::catalogWidth() const
 {
-    return editing() ? std::clamp(m_maximumWidth - canvasWidth() - kCatalogGap, 0.0, 954.0) : 0;
+    return editing() ? std::clamp(m_maximumWidth - canvasWidth() - 24, 0.0, 961.0) : 0;
 }
 
 double ControlCenterView::canvasX() const { return editing() ? catalogWidth() + kCatalogGap : 0; }
 double ControlCenterView::windowWidth() const { return canvasX() + canvasWidth(); }
-double ControlCenterView::gap() const { return std::round(canvasWidth() * .039); }
+double ControlCenterView::gap() const { return std::round(canvasWidth() * .041); }
 double ControlCenterView::cell() const { return (canvasWidth() - 2 * kInset - 3 * gap()) / 4; }
 
 double ControlCenterView::gridTop() const
 {
-    return kInset + (editing() ? kEditorHeader : m_users->isVisible()
-                    ? m_users->heightForWidth(canvasWidth() - 2 * kInset) + gap() : 0);
+    return kTop + (editing() ? kEditorHeader : m_users->isVisible()
+                    ? m_users->sizeHint().height + 9 : 0);
 }
 
 int ControlCenterView::rows() const { return std::max(editing() ? 8 : 1, page().rows()); }
@@ -703,13 +744,13 @@ ui::RectF ControlCenterView::tileRect(Size size, base::Point point) const
             dim.width() * step - gap(), dim.height() * step - gap()};
 }
 
-ui::RectF ControlCenterView::catalogRect() const { return {kInset, 5, catalogWidth() - kInset, windowHeight(1) - 12}; }
+ui::RectF ControlCenterView::catalogRect() const { return {0, 23, catalogWidth(), windowHeight(1) - 23}; }
 
 ui::RectF ControlCenterView::editRect() const
 {
-    const double width = editing() ? 68 : 118;
+    const double width = editing() ? 86 : 172;
     return {canvasX() + (editing() ? canvasWidth() - width - kInset : (canvasWidth() - width) / 2),
-            gridTop() + gridViewport() + 9, width, 31};
+            gridTop() + gridViewport() + 20, width, 32};
 }
 
 void ControlCenterView::rebuild(bool animate)
@@ -882,7 +923,7 @@ void ControlCenterView::retranslate()
 
 void ControlCenterView::refresh()
 {
-    const bool hadUsers = m_users->isVisible();
+    const auto previousHeight = m_users->isVisible() ? m_users->sizeHint().height : 0;
     m_users->setUsers(m_services.deviceUsers());
     m_users->setVisible(!editing() && !m_users->users().empty());
     for (const auto &tile : page().tiles) {
@@ -908,7 +949,7 @@ void ControlCenterView::refresh()
         }
     }
     requestLayout();
-    if (onHeightChanged && hadUsers != m_users->isVisible())
+    if (onHeightChanged && previousHeight != (m_users->isVisible() ? m_users->sizeHint().height : 0))
         onHeightChanged();
 }
 
@@ -954,8 +995,11 @@ void ControlCenterView::layout()
         if (!dragging)
             m_glassTiles.push_back(translated(r, clip.x, clip.y));
     }
-    if (m_users->isVisible())
-        m_users->setGeometry({kInset, kInset, canvasWidth() - 2 * kInset, m_users->heightForWidth(canvasWidth() - 2 * kInset)});
+    if (m_users->isVisible()) {
+        const auto hint = m_users->sizeHint();
+        const double width = std::min(canvasWidth() - 2 * kInset, hint.width);
+        m_users->setGeometry({(canvasWidth() - width) / 2, kTop, width, hint.height});
+    }
     // In live mode the chrome leaves the native sliders and media interactive.
     m_chrome->setGeometry(editing() ? localRect() : editRect());
     if (onGlassChanged)
@@ -970,13 +1014,36 @@ ui::Path ControlCenterView::glassShape() const
     ui::Path clip;
     clip.addRect(gridClip());
     mask = mask.intersected(clip);
-    if (editing())
-        mask.addRoundedRect(catalogRect(), 24, 24);
-    else if (m_users->isVisible())
-        mask.addRoundedRect(m_users->geometry(), 20, 20);
+    if (editing()) {
+        mask.addRoundedRect(catalogRect(), 31, 31);
+        mask.addRoundedRect({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 52}, 26, 26);
+    } else if (m_users->isVisible()) {
+        mask.addRoundedRect(m_users->geometry(), 18, 18);
+    }
     const auto footer = editRect();
     mask.addRoundedRect(footer, footer.height / 2, footer.height / 2);
     return mask;
+}
+
+std::vector<render::GlassLens> ControlCenterView::glassLenses() const
+{
+    std::vector<render::GlassLens> pieces;
+    const auto add = [&](const ui::RectF &r, double corners, float tint = -1, float opacity = 1) {
+        pieces.push_back({ui::toBase(r), corners, tint, opacity});
+    };
+    const auto clip = ui::toBase(gridClip());
+    for (const auto &tile : m_glassTiles)
+        if (clip.intersects(ui::toBase(tile)))
+            add(tile, radius(tile));
+    if (editing()) {
+        add(catalogRect(), 31, .48f, float(m_catalogReveal));
+        add({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 52}, 26);
+    } else if (m_users->isVisible()) {
+        add(m_users->geometry(), 18);
+    }
+    const auto footer = editRect();
+    add(footer, footer.height / 2);
+    return pieces;
 }
 
 void ControlCenterView::scrollGrid(double delta)
