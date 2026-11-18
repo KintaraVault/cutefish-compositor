@@ -58,6 +58,7 @@
 #include "ui/search_field.h"
 #include "ui/switch.h"
 #include "ui/theme.h"
+#include "ui/image_view.h"
 #include "ui/window.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -285,6 +286,14 @@ protected:
         frame();
     }
 
+    void rightClick(double x, double y)
+    {
+        move(x, y);
+        input.onPointerButton(at(time += 5), BTN_RIGHT, true);
+        input.onPointerButton(at(time += 5), BTN_RIGHT, false);
+        frame();
+    }
+
     void key(uint32_t code)
     {
         input.onKey(at(time += 5), code, true);
@@ -464,17 +473,17 @@ TEST_F(ControlCenterTest, TheControlCentreHangsBelowTheBarWithThePanelGlass)
     EXPECT_TRUE(window->wmWindow()->isPopup());
     // Right of the screen it does not fit: the visible tiles stop 18 px from the edge.
     const base::Rect bounds = window->drawnBounds();
-    EXPECT_EQ(base::Rect(1440 - 382 - 12, 38, 382, bounds.height()), bounds);
+    EXPECT_EQ(base::Rect(1440 - 263 - 12, 38, 263, bounds.height()), bounds);
     EXPECT_GT(bounds.height(), 400);
     EXPECT_TRUE(window->surface()->glass().enabled);
     EXPECT_GE(window->surface()->glass().lenses.size(), 18u);
     EXPECT_GT(window->surface()->glass().underlay.opacity, 0);
-    EXPECT_TRUE(window->surface()->glass().underlay.bounds.contains({187, 30}));
-    EXPECT_EQ(base::Rect(0, 0, 382, bounds.height()), window->surface()->backgroundBlurRect());
+    EXPECT_TRUE(window->surface()->glass().underlay.bounds.contains({131, 30}));
+    EXPECT_EQ(base::Rect(0, 0, 263, bounds.height()), window->surface()->backgroundBlurRect());
     EXPECT_EQ(16, window->surface()->backgroundBlurRadius());
     const auto mask = window->surface()->backgroundBlurShape();
     EXPECT_TRUE(mask.contains({40, 30}));
-    EXPECT_FALSE(mask.contains({187, 30})); // no enclosing glass in the grid gutter
+    EXPECT_FALSE(mask.contains({131, 30})); // no enclosing glass in the grid gutter
 
     // Escape closes it; the bar lends it the keyboard.
     key(KEY_ESC);
@@ -502,8 +511,8 @@ TEST_F(ControlCenterTest, CardsToggleTheirServices)
     EXPECT_TRUE(view->bluetoothCard()->isChecked());
     EXPECT_FALSE(view->doNotDisturbCard()->isChecked());
 
-    // A card with a detail page toggles from its plate only.
-    clickPlate(view->bluetoothCard());
+    // The whole card toggles, not just its icon.
+    clickView(Panel::ControlCenter, view->bluetoothCard());
     test::runFor(std::chrono::milliseconds(5));
     EXPECT_FALSE(services->bluetooth);
     EXPECT_FALSE(view->bluetoothCard()->isChecked());
@@ -527,6 +536,83 @@ TEST_F(ControlCenterTest, CardsToggleTheirServices)
     EXPECT_TRUE(view->wirelessCard()->isVisible());
     EXPECT_FALSE(view->wirelessCard()->isEnabled());
     EXPECT_EQ(before, center->popupWindow(Panel::ControlCenter)->drawnBounds().height());
+}
+
+TEST_F(ControlCenterTest, EditorsFollowThemeAndThePanelClosesWithAFade)
+{
+    struct RestoreTheme {
+        ui::Theme previous = ui::Theme::current();
+        ~RestoreTheme() { ui::Theme::setCurrent(previous); }
+    } restore;
+    ui::Theme::setCurrent(ui::Theme::light());
+    center->openPanel(Panel::ControlCenter, bar.get(), item(178));
+    frames(std::chrono::milliseconds(300));
+    auto *panel = center->popupWindow(Panel::ControlCenter);
+    auto *view = center->controlCenterView();
+    view->edit(true);
+    frames(std::chrono::milliseconds(390));
+    EXPECT_GT(panel->surface()->glass().tintRed, .9f);
+    ui::Theme::setCurrent(ui::Theme::dark());
+    frames(std::chrono::milliseconds(40));
+    EXPECT_LT(panel->surface()->glass().tintRed, .1f);
+    view->edit(false);
+    frames(std::chrono::milliseconds(300));
+    EXPECT_FALSE(view->editing());
+
+    shell::DesktopWidgets widgets(shell.get(), *center, directory.filePath("theme-widgets.conf"));
+    widgets.edit();
+    frames(std::chrono::milliseconds(390));
+    const auto gallery = std::ranges::find_if(shell->windows(), [](const auto *window) {
+        return window->wmWindow() && window->wmWindow()->role() == wm::WindowRole::Picker;
+    });
+    ASSERT_NE(gallery, shell->windows().end());
+    EXPECT_LT((*gallery)->surface()->glass().tintRed, .1f);
+    ui::Theme::setCurrent(ui::Theme::light());
+    frames(std::chrono::milliseconds(40));
+    EXPECT_GT((*gallery)->surface()->glass().tintRed, .9f);
+    widgets.done();
+
+    center->closePanels();
+    EXPECT_FALSE(center->isOpen(Panel::ControlCenter));
+    frames(std::chrono::milliseconds(95));
+    EXPECT_GT(panel->surface()->glass().opacity, 0);
+    EXPECT_LT(panel->surface()->glass().opacity, 1);
+    frames(std::chrono::milliseconds(155));
+    EXPECT_EQ(nullptr, center->popupWindow(Panel::ControlCenter));
+}
+
+TEST_F(ControlCenterTest, MediaCoverFadesInAndClearsWhenThePlayerStops)
+{
+    auto path = directory.filePath("cover.png");
+    // The optional private fixture runs the same case over HTTP.
+    if (const auto *url = std::getenv("CUTEFISH_TEST_COVER_URL")) {
+        path = url;
+    } else {
+        ui::Bitmap bitmap(24, 24, ui::Bitmap::Format::Argb32Premultiplied);
+        std::fill_n(reinterpret_cast<uint32_t *>(bitmap.bits()), bitmap.stride() * bitmap.height() / 4, 0xffc05830);
+        ASSERT_TRUE(bitmap.savePng(path));
+    }
+    center->openPanel(Panel::ControlCenter, bar.get(), item(178));
+    frame();
+    auto *media = center->controlCenterView()->media();
+    ASSERT_NE(media, nullptr);
+    const auto findCover = std::ranges::find_if(media->children(), [](const auto &child) {
+        return child->name() == "media-cover-image";
+    });
+    ASSERT_NE(findCover, media->children().end());
+    auto *cover = static_cast<ui::ImageView *>(findCover->get());
+    shell::MediaState playing;
+    playing.hasPlayer = true;
+    playing.artUrl = path;
+    media->setState(playing);
+    for (int n = 0; n < 100 && !cover->isVisible(); ++n)
+        frames(std::chrono::milliseconds(16));
+    ASSERT_TRUE(cover->isVisible());
+    EXPECT_LT(cover->opacity(), 1);
+    frames(std::chrono::milliseconds(325));
+    EXPECT_DOUBLE_EQ(cover->opacity(), 1);
+    media->setState({});
+    EXPECT_FALSE(cover->isVisible());
 }
 
 TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPages)
@@ -556,12 +642,12 @@ TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPa
     // Centred on the card's height, as far from its end as the plate is from its start.
     const ui::RectF chevron = wireless->chevron()->geometry();
     EXPECT_DOUBLE_EQ(wireless->geometry().height / 2, chevron.y + chevron.height / 2);
-    EXPECT_DOUBLE_EQ(17, wireless->geometry().width - chevron.x - chevron.width);
+    EXPECT_DOUBLE_EQ(10, wireless->geometry().width - chevron.x - chevron.width);
 
-    // A click off the plate pushes the Wi-Fi panel: the pages slide and the
+    // Right click pushes the Wi-Fi panel without toggling: the pages slide and the
     // window's height glides to the panel's.
     const base::Rect popup = window->drawnBounds();
-    click(card.x(), card.y());
+    rightClick(card.x(), card.y());
     test::runFor(std::chrono::milliseconds(5));
     EXPECT_TRUE(services->wireless);
     auto *panel = dynamic_cast<shell::NetworkPanel *>(pager->detailPage());
@@ -575,8 +661,8 @@ TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPa
     EXPECT_LT(view->opacity(), 1);
     // The window follows the pages frame by frame, narrowing to a status
     // panel's width with its right edge kept.
-    EXPECT_LT(window->drawnBounds().width(), 382);
-    EXPECT_GT(window->drawnBounds().width(), 320);
+    EXPECT_GT(window->drawnBounds().width(), 263);
+    EXPECT_LT(window->drawnBounds().width(), 320);
     EXPECT_EQ(1440 - 12, window->drawnBounds().right());
     EXPECT_GT(window->drawnBounds().height(), std::min(mainHeight, int(std::lround(panel->shownBottom()))));
     EXPECT_LT(window->drawnBounds().height(), std::max(mainHeight, int(std::lround(panel->shownBottom()))));
@@ -602,7 +688,7 @@ TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPa
     EXPECT_EQ(nullptr, pager->detailPage());
     EXPECT_TRUE(view->isVisible());
     EXPECT_EQ(1, view->opacity());
-    EXPECT_EQ(base::Rect(1440 - 382 - 12, 38, 382, mainHeight), window->drawnBounds());
+    EXPECT_EQ(base::Rect(1440 - 263 - 12, 38, 263, mainHeight), window->drawnBounds());
 
     // The audio output button sits beside its slider; the title also opens it.
     shell::TileSlider *sound = view->soundSlider();
@@ -614,10 +700,10 @@ TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPa
     EXPECT_EQ(1, sound->chevron()->opacity());
     const auto *soundTitle = static_cast<const ui::Label *>(sound->children().front().get());
     const ui::RectF soundChevron = sound->chevron()->geometry();
-    EXPECT_DOUBLE_EQ(sound->slider()->geometry().y + 11, soundChevron.y + soundChevron.height / 2);
-    EXPECT_DOUBLE_EQ(23, sound->geometry().width - soundChevron.x - soundChevron.width);
+    EXPECT_DOUBLE_EQ(sound->slider()->geometry().y + 10, soundChevron.y + soundChevron.height / 2);
+    EXPECT_DOUBLE_EQ(15, sound->geometry().width - soundChevron.x - soundChevron.width);
     const ui::PointF soundOrigin = sound->mapToWindow({soundTitle->geometry().x + 4, soundTitle->geometry().y + 4});
-    click(popup.x() + soundOrigin.x, popup.y() + soundOrigin.y);
+    rightClick(popup.x() + soundOrigin.x, popup.y() + soundOrigin.y);
     frames(std::chrono::milliseconds(400));
     auto *volume = dynamic_cast<shell::VolumePanel *>(pager->detailPage());
     ASSERT_NE(nullptr, volume);
@@ -632,7 +718,8 @@ TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPa
     // The Bluetooth chevron; the panel's settings link closes the control centre.
     services->devices = {{"/dev/a", "AirPods", "audio-headphones", true, false, 72}};
     shell::CardItem *bluetooth = view->bluetoothCard();
-    clickView(Panel::ControlCenter, bluetooth);
+    const auto bt = centre(Panel::ControlCenter, bluetooth);
+    rightClick(bt.x(), bt.y());
     frames(std::chrono::milliseconds(400));
     EXPECT_TRUE(services->bluetooth);
     auto *devices = dynamic_cast<shell::BluetoothPanel *>(pager->detailPage());
@@ -655,8 +742,8 @@ TEST_F(ControlCenterTest, SlidersMoveTheLevelsAndTheMediaCardControlsThePlayer)
     // A press puts the knob's centre under the pointer.
     const ui::PointF origin = sound->mapToWindow({0, 0});
     const base::Rect popup = center->popupWindow(Panel::ControlCenter)->drawnBounds();
-    const double travel = sound->geometry().width - 98;
-    click(popup.x() + origin.x + 23 + travel * 0.5, popup.y() + origin.y + 11);
+    const double travel = sound->geometry().width - 67;
+    click(popup.x() + origin.x + 16 + travel * 0.5, popup.y() + origin.y + 10);
     EXPECT_NEAR(0.5, services->volumeValue, 0.011);
     EXPECT_FALSE(services->mutedValue);
 
@@ -986,7 +1073,7 @@ TEST_F(ControlCenterTest, EditorAddsDragsCancelsAndRemovesControls)
     const base::Rect shown = window->drawnBounds();
     click(shown.center().x(), shown.bottom() - 24);
     ASSERT_TRUE(view->editing());
-    frames(std::chrono::milliseconds(300));
+    frames(std::chrono::milliseconds(370));
     const base::Rect expanded = window->drawnBounds();
     EXPECT_GT(expanded.width(), 1000);
     const auto shape = window->surface()->backgroundBlurShape();
@@ -1005,7 +1092,7 @@ TEST_F(ControlCenterTest, EditorAddsDragsCancelsAndRemovesControls)
     const int id = center->layoutModel().page(page)->tiles.front().id;
     const auto first = centre(Panel::ControlCenter, view->wirelessCard());
     press(first.x(), first.y());
-    move(first.x() + 100, first.y() + 102);
+    move(first.x() + 66, first.y() + 66);
     key(KEY_ESC);
     test::runFor(std::chrono::milliseconds(10));
     release();
@@ -1013,7 +1100,7 @@ TEST_F(ControlCenterTest, EditorAddsDragsCancelsAndRemovesControls)
     EXPECT_EQ(base::Point(0, 0), center->layoutModel().page(page)->tile(id)->cell);
 
     press(first.x(), first.y());
-    move(first.x() + 100, first.y() + 102);
+    move(first.x() + 66, first.y() + 66);
     release();
     frames(std::chrono::milliseconds(270));
     EXPECT_EQ(base::Point(1, 1), center->layoutModel().page(page)->tile(id)->cell);
@@ -1021,7 +1108,7 @@ TEST_F(ControlCenterTest, EditorAddsDragsCancelsAndRemovesControls)
     click(expanded.x() + tile.x, expanded.y() + tile.y);
     EXPECT_TRUE(center->layoutModel().page(page)->tiles.empty());
     key(KEY_ESC);
-    test::runFor(std::chrono::milliseconds(10));
+    frames(std::chrono::milliseconds(300));
     EXPECT_FALSE(view->editing());
     EXPECT_TRUE(center->isOpen(Panel::ControlCenter));
 }
@@ -1060,6 +1147,8 @@ TEST_F(ControlCenterTest, ControlCatalogRisesOverTheDockAndReachesTheScreenEdge)
     EXPECT_EQ(window->surface(), seat.pointerFocus());
     key(KEY_ESC);
     frames(std::chrono::milliseconds(40));
+    EXPECT_GT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
+    frames(std::chrono::milliseconds(260));
     EXPECT_EQ(live.bottom(), window->drawnBounds().bottom());
     EXPECT_LT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
 }
@@ -1206,8 +1295,7 @@ TEST_F(ControlCenterTest, TheBarsItemsOpenEveryPanel)
     const int page = center->controlCenterView()->pageId();
     ASSERT_GT(page, 0);
     key(KEY_ESC);
-    test::runFor(std::chrono::milliseconds(30));
-    frame();
+    frames(std::chrono::milliseconds(300));
     clickBarItem(menuBar->controlIcon());
     ASSERT_NE(nullptr, center->controlCenterView());
     EXPECT_EQ(0, center->controlCenterView()->pageId());

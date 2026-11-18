@@ -50,24 +50,17 @@ const std::vector<Definition> &catalog()
     static const std::vector<Definition> definitions {
         {"wifi", "Wi-Fi", "Connectivity", "network-wireless-connected-100", Size::Medium, kCompact, PinStyle::Visibility, true},
         {"bluetooth", "Bluetooth", "Connectivity", "bluetooth-symbolic", Size::Medium, kCompact, PinStyle::Visibility, true},
-        {"airdrop", "AirDrop", "Connectivity", "network-transmit-receive-symbolic", Size::Medium, kCompact},
         {"screenshot", "Screenshot", "Screen Capture", "camera-photo-symbolic", Size::Small, kFlexible, PinStyle::Copy},
         {"record", "Screen Recording", "Screen Capture", "media-record-symbolic", Size::Small, kFlexible, PinStyle::Copy},
         {"display", "Display", "Display & Brightness", "brightness", Size::Wide, bit(Size::Wide), PinStyle::Visibility},
-        {"mirror", "Screen Mirroring", "Display & Brightness", "video-display-symbolic", Size::Small, kCompact},
         {"dark", "Dark Mode", "Display & Brightness", "dark-mode", Size::Small, kCompact, PinStyle::Add, true},
-        {"night", "Night Shift", "Display & Brightness", "weather-clear-night-symbolic", Size::Small, kCompact},
-        {"true-tone", "True Tone", "Display & Brightness", "weather-clear-symbolic", Size::Small, kCompact},
+        {"night", "Night Light", "Display & Brightness", "weather-clear-night-symbolic", Size::Small, kCompact},
         {"lock", "Lock Screen", "Lock Screen", "system-lock-screen-symbolic", Size::Small, kFlexible, PinStyle::Copy},
         {"screensaver", "Start Screen Saver", "Lock Screen", "preferences-desktop-screensaver-symbolic", Size::Small, kFlexible, PinStyle::Copy},
         {"display-sleep", "Sleep Display", "Lock Screen", "system-suspend-symbolic", Size::Small, kFlexible, PinStyle::Copy},
-        {"home", "Scene or Accessory", "Home", "user-home-symbolic", Size::Large, kFlexible, PinStyle::Copy, true},
-        {"shortcut", "Run Shortcut", "Shortcuts", "system-run-symbolic", Size::Medium, kFlexible, PinStyle::Copy, true},
-        {"keyboard", "Full Keyboard Access", "Keyboard", "input-keyboard-symbolic", Size::Small, kCompact, PinStyle::Add, true},
         {"keyboard-light", "Keyboard Brightness", "Keyboard", "keyboard-brightness-symbolic", Size::Medium, kCompact},
         {"desktop", "Show Desktop", "Desktop & Windows", "user-desktop-symbolic", Size::Small, kFlexible, PinStyle::Copy},
         {"overview", "Window Overview", "Desktop & Windows", "view-grid-symbolic", Size::Large, kFlexible, PinStyle::Copy},
-        {"stage", "Stage Manager", "Desktop & Windows", "view-list-symbolic", Size::Small, kFlexible},
         {"dock", "Automatically Hide the Dock", "Desktop & Windows", "go-up-symbolic", Size::Small, kFlexible},
         {"corners", "Corners", "Desktop & Windows", "view-grid-symbolic", Size::Medium, kFlexible, PinStyle::Copy},
         {"left-right", "Left & Right", "Desktop & Windows", "view-split-left-right-symbolic", Size::Medium, kFlexible, PinStyle::Copy},
@@ -79,7 +72,6 @@ const std::vector<Definition> &catalog()
         {"widgets", "Edit Widgets", "Clock", "view-grid-symbolic", Size::Small, kCompact},
         {"sound", "Sound", "Sound", "audio-volume-high-symbolic", Size::Wide, bit(Size::Wide), PinStyle::Visibility},
         {"media", "Now Playing", "Now Playing", "media-playback-start-symbolic", Size::Large, bit(Size::Large), PinStyle::Visibility, true},
-        {"recognize", "Recognize Music", "Now Playing", "audio-x-generic-symbolic", Size::Medium, kFlexible, PinStyle::Add, true},
         {"calculator", "Calculator", "Utilities", "accessories-calculator-symbolic", Size::Small, kFlexible, PinStyle::Copy, true},
         {"camera", "Camera", "Privacy", "camera", Size::Small, kCompact},
         {"microphone", "Microphone", "Privacy", "microphone", Size::Small, kCompact},
@@ -214,9 +206,9 @@ Layout::Layout(std::string file)
         addAt("wifi", {0, 0});
         addAt("media", {2, 0});
         addAt("bluetooth", {0, 1});
-        addAt("airdrop", {0, 2});
+        addAt("battery", {0, 2});
         addAt("desktop", {2, 2});
-        addAt("mirror", {3, 2});
+        addAt("widgets", {3, 2});
         addAt("dark", {0, 3});
         addAt("screenshot", {1, 3});
         addAt("focus", {2, 3});
@@ -228,7 +220,7 @@ Layout::Layout(std::string file)
         addAt("lock", {3, 6});
         addAt("record", {0, 7});
         addAt("camera", {1, 7});
-        addAt("recognize", {2, 7});
+        addAt("dock", {2, 7});
     }
     const auto selected = m_settings.intValue("Pages/selected", 0);
     if (selected >= 0 && selected < kMaxStoredId && page(int(selected)))

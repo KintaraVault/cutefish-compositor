@@ -71,6 +71,14 @@ constexpr double kOpaqueTintAlpha = 0.7;
 
 constexpr double kMenuArrowLength = 8;
 
+template <typename Menu>
+void setMenuArrowLength(Menu &menu)
+{
+    // Older toolkit builds provide the default arrow but no length setter.
+    if constexpr (requires { menu.setArrowLength(kMenuArrowLength); })
+        menu.setArrowLength(kMenuArrowLength);
+}
+
 double glassAmount(double tint)
 {
     const int last = int(std::size(kPace)) - 1;
@@ -1583,7 +1591,7 @@ void DockWindow::popupMenu(DockIcon *icon, std::unique_ptr<ui::Menu> menu)
                              : direction == DockSettings::Right ? ui::BubbleShape::Edge::Right
                                                                 : ui::BubbleShape::Edge::Bottom,
                      centre);
-    m_menu->setArrowLength(kMenuArrowLength);
+    setMenuArrowLength(*m_menu);
     m_menu->setContinuousCorners(true);
     if (const Shell::Output *output = m_shell->output({})) {
         base::Rect area = m_shell->workArea(*output);

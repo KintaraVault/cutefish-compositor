@@ -47,6 +47,7 @@ public:
 
     // The value the user moved the knob to.
     std::function<void(double value)> onMoved;
+    std::function<void()> onContext;
 
     bool acceptsPointer() const override { return true; }
 

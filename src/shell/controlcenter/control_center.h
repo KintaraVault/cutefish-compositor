@@ -102,6 +102,9 @@ private:
         base::Rect anchor;
         base::Rect geometry;
         bool dark = false;
+        bool closing = false;
+        double visibility = 1.;
+        std::unique_ptr<ui::Animation> closeTween;
     };
 
     static size_t index(Panel panel);
@@ -109,6 +112,7 @@ private:
     ControlCenterView::State state(std::string_view type) const;
     void activate(std::string_view type, bool detail);
     void close(Panel panel);
+    void finishClosing(Panel panel);
     void refresh();
     void retranslate();
     // A status panel's window as tall as the panel is drawn, and the glass

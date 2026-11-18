@@ -140,7 +140,7 @@ void LevelSlider::wheel(const ui::ScrollEvent &event)
 void LevelSlider::dragTo(double x)
 {
     if (m_controlStyle) {
-        setFromFraction((x - 23) / std::max(1., geometry().width - (m_audio ? 98. : 46.)));
+        setFromFraction((x - 16) / std::max(1., geometry().width - (m_audio ? 67. : 32.)));
         return;
     }
     const double travel = geometry().width - geometry().height;
@@ -154,13 +154,15 @@ void LevelSlider::paint(ui::Painter &painter)
         return;
     const auto white = ui::Color::rgb(0xffffff);
     const double y = geometry().height / 2;
-    const double width = std::max(0., geometry().width - (m_audio ? 98. : 46.));
-    painter.fillRoundedRect({23, y - 2.5, width, 5}, 2.5, ui::Color {0, 0, 0, 38});
-    painter.fillRoundedRect({23, y - 2.5, width * position(), 5}, 2.5, white);
+    const double width = std::max(0., geometry().width - (m_audio ? 67. : 32.));
+    painter.fillRoundedRect({16, y - 2, width, 4}, 2, ui::Color {0, 0, 0, 38});
+    painter.fillRoundedRect({16, y - 2, width * position(), 4}, 2, white);
+    if (m_pressed || isHovered())
+        painter.fillRoundedRect({16 + width * position() - 9, y - 5, 18, 10}, 5, white);
     if (!m_icon.empty())
-        painter.drawSvg(m_icon, {0, y - 8, 16, 16}, white);
+        painter.drawSvg(m_icon, {0, y - 6, 12, 12}, white);
     const auto end = panel::artwork(m_audio ? "audio-volume-high-symbolic" : "brightness", true);
-    painter.drawSvg(end, {geometry().width - (m_audio ? 69 : 16), y - 9, 18, 18}, white);
+    painter.drawSvg(end, {geometry().width - (m_audio ? 46 : 12), y - 6, 12, 12}, white);
 }
 
 void LevelSlider::layout()
@@ -172,6 +174,8 @@ void LevelSlider::pointerPress(const ui::PointerEvent &event)
 {
     if (event.button != ui::MouseButton::Left)
         return;
+    if (m_controlStyle && m_audio && event.position.x > geometry().width - 24)
+        return; // Reserved for the output affordance; right-click opens it.
     m_pressed = true;
     dragTo(event.position.x);
 }
@@ -184,6 +188,10 @@ void LevelSlider::pointerMove(const ui::PointerEvent &event)
 
 void LevelSlider::pointerRelease(const ui::PointerEvent &event)
 {
+    if (event.button == ui::MouseButton::Right && onContext) {
+        onContext();
+        return;
+    }
     if (event.button != ui::MouseButton::Left || !m_pressed)
         return;
     m_pressed = false;
@@ -204,6 +212,7 @@ TileSlider::TileSlider(std::string title)
     m_chevron = addChild<DetailChevron>();
     m_chevron->setVisible(false);
     m_slider = addChild<LevelSlider>();
+    m_slider->onContext = [this] { if (m_controlStyle && onDetail) onDetail(); };
 }
 
 void TileSlider::setTitle(std::string title)
@@ -249,13 +258,13 @@ void TileSlider::layout()
         const double w = geometry().width;
         m_title->setColor(white);
         m_title->setWeight(600);
-        m_title->setFontSize(16);
-        m_title->setGeometry({20, 10, std::max(0., w - 40), 26});
+        m_title->setFontSize(12);
+        m_title->setGeometry({13, 6, std::max(0., w - 26), 20});
         m_slider->setControlStyle(true, m_hasDetail);
-        m_slider->setGeometry({20, geometry().height - 39, std::max(0., w - 40), 22});
+        m_slider->setGeometry({13, geometry().height - 29, std::max(0., w - 26), 20});
         if (m_hasDetail) {
             m_chevron->setColor(white);
-            m_chevron->setGeometry({w - 43, geometry().height - 44, 20, 32});
+            m_chevron->setGeometry({w - 31, geometry().height - 28, 16, 18});
         }
         return;
     }
@@ -286,11 +295,11 @@ void TileSlider::paint(ui::Painter &painter)
         panel::paintTile(painter, localRect());
     else if (m_hasDetail) {
         const auto white = ui::Color::rgb(0xffffff);
-        const auto y = geometry().height - 28;
-        const auto x = geometry().width - 35;
-        painter.fillRoundedRect({x - 17, y - 17, 34, 34}, 17, white.withAlpha(.16));
-        painter.strokeRoundedRect({x - 7, y - 7, 14, 14}, 7, white.withAlpha(.78));
-        painter.strokeRoundedRect({x - 4, y - 4, 8, 8}, 4, white.withAlpha(.78));
+        const auto y = geometry().height - 19;
+        const auto x = geometry().width - 23;
+        painter.fillRoundedRect({x - 11, y - 11, 22, 22}, 11, white.withAlpha(.16));
+        painter.strokeRoundedRect({x - 5, y - 5, 10, 10}, 5, white.withAlpha(.78));
+        painter.strokeRoundedRect({x - 3, y - 3, 6, 6}, 3, white.withAlpha(.78));
     }
 }
 
@@ -306,6 +315,11 @@ void TileSlider::pointerPress(const ui::PointerEvent &event)
 
 void TileSlider::pointerRelease(const ui::PointerEvent &event)
 {
+    if (m_controlStyle) {
+        if (event.button == ui::MouseButton::Right && onDetail)
+            onDetail();
+        return;
+    }
     if (event.button != ui::MouseButton::Left || !m_detailPressed)
         return;
     m_detailPressed = false;

@@ -10,9 +10,12 @@ separate, input-transparent glass card that follows the pointer onto the desktop
 Open Control Center from the menu bar. **Edit Controls** opens a searchable
 catalog alongside the four-column grid. The catalog rises from the physical
 bottom edge and covers the dock; the live panel stays within the work area.
+The live grid uses a compact 263 logical pixel canvas. It glides next to the
+catalog and back; closing the panel fades the content and the glass together.
 Click a preview or drag it into the grid to add it. Drag an existing control to
-move it; Escape cancels the drag.
-Use its minus button to remove it or its context menu to resize it and manage
+move it; Escape cancels the drag. Left click runs a live control's primary
+action; right click opens its detail page where available.
+Use its minus button to remove it with a shrink/fade or its context menu to resize it and manage
 its menu-bar presence. Only supported sizes are selectable. The plus in the
 menu bar creates a new page. Pick an icon above the grid and open that page
 from its own menu-bar icon. Right-click the icon strip of a custom page to
@@ -39,8 +42,11 @@ Catalog previews have their own lenses, clipped to the scrolling viewport.
 The center, catalog and desktop widgets use separate neutral material settings,
 so the wallpaper supplies their hue. Animations approximate the supplied footage,
 which does not specify easing curves or durations.
-Controls that have no corresponding system service (such as AirDrop and Home)
-are available as catalog entries but explicitly marked unavailable in use.
+Apple ecosystem services do not appear in the catalog. Existing preferences
+skip retired entries and preserve the locations of the remaining controls.
+Both editors follow the current light/dark appearance. Now Playing loads the
+current MPRIS artwork from a file or audio player's HTTP(S) URL, using libcurl
+7.85 or newer for remote covers. No external metadata provider is queried.
 
 ## Isolated reference captures
 

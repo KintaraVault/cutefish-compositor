@@ -24,14 +24,15 @@ using controls::Tile;
 using i18n::tr;
 using namespace std::chrono_literals;
 
-constexpr double kInset = 6;
+constexpr double kInset = 4;
 constexpr double kTop = 12;
 constexpr double kCatalogGap = -1;
-constexpr double kFooter = 57;
-constexpr double kEditorHeader = 68;
+constexpr double kFooter = 39;
+constexpr double kEditorHeader = 50;
 constexpr ui::Color kGreen {42, 157, 75, 255};
 constexpr auto kCanvasInk = ui::Color::rgb(0xffffff);
 constexpr auto kCatalogInk = ui::Color::rgb(0x171622);
+ui::Color catalogInk() { return panel::dark() ? kCanvasInk : kCatalogInk; }
 
 double radius(const ui::RectF &r)
 {
@@ -142,10 +143,6 @@ public:
     {
         setTracksHover(true);
         search = addChild<ui::SearchField>(tr("Search Controls"));
-        search->setFill(ui::ColorRecipe(kCanvasInk));
-        search->setGlyphColor(ui::ColorRecipe(kCatalogInk));
-        search->setTextColor(ui::ColorRecipe(kCatalogInk));
-        search->setPlaceholderColor(ui::ColorRecipe(kCatalogInk.withAlpha(.74)));
         search->setFontSize(15);
         search->setName("control-search");
         search->setVisible(false);
@@ -182,6 +179,10 @@ protected:
         const auto r = v.catalogRect();
         search->setVisible(editing);
         if (editing) {
+            search->setFill(ui::ColorRecipe(panel::dark() ? kCanvasInk.withAlpha(.14) : kCanvasInk));
+            search->setGlyphColor(ui::ColorRecipe(catalogInk()));
+            search->setTextColor(ui::ColorRecipe(catalogInk()));
+            search->setPlaceholderColor(ui::ColorRecipe(catalogInk().withAlpha(.74)));
             search->setGeometry({r.x + 26, r.y + 26, sidebarWidth() - 52, 37});
             search->setOpacity(v.m_catalogReveal);
         }
@@ -224,7 +225,7 @@ protected:
         }
         painter.restore();
 
-        text(painter, {v.canvasX() + 24, kTop, 62, 52}, tr("Icon:"), 11, ink.withAlpha(.54));
+        text(painter, {v.canvasX() + 13, kTop, 48, 44}, tr("Icon:"), 10, ink.withAlpha(.54));
         for (size_t i = 0; i < controls::pageIcons().size(); ++i) {
             const auto r = iconRect(i);
             const bool checked = v.page().icon == controls::pageIcons()[i];
@@ -249,6 +250,20 @@ protected:
             preview(painter, *def, held->size,
                     {hover.x - anchor.x, hover.y - anchor.y, r.width, r.height},
                     v.state ? v.state(def->id) : State {}, v.m_services.media(), true);
+        }
+        if (v.m_removed && v.m_removal < 1) {
+            const auto &tile = v.m_removed->tile;
+            const auto r = v.removingRect();
+            painter.save();
+            painter.clip(v.gridClip());
+            painter.clipRoundedRect(r, radius(r));
+            painter.multiplyOpacity(1 - v.m_removal);
+            const auto *def = controls::find(tile.type);
+            if (tile.size == Size::Small)
+                glyph(painter, *def, centered(r, r.height * .35), ink);
+            else
+                text(painter, r, tr(def->title), 10 * (1 - .55 * v.m_removal), ink, true, true);
+            painter.restore();
         }
     }
 
@@ -334,8 +349,7 @@ protected:
             v.edit(!editing);
         } else if (editing) {
             if (held && held->id && contains(minusRect(*held), hover) && contains(minusRect(*held), origin)) {
-                if (v.m_model.remove(v.m_page, held->id))
-                    v.changed();
+                v.removeTile(held->id);
             } else if (held && !held->id) {
                 if (const auto *item = previewAt(hover); item && item->def->id == held->type)
                     addPreview(*item);
@@ -418,8 +432,8 @@ private:
     }
     ui::RectF iconRect(size_t i) const
     {
-        const double width = (v.canvasWidth() - kInset * 2 - 80) / 5;
-        return {v.canvasX() + kInset + 80 + width * i + 3, kTop + 5, width - 8, 42};
+        const double width = (v.canvasWidth() - kInset * 2 - 61) / 5;
+        return {v.canvasX() + kInset + 61 + width * i + 3, kTop + 5, width - 8, 34};
     }
     ui::RectF pageRect(size_t i) const
     {
@@ -499,8 +513,7 @@ private:
         }
         menu->addSeparator();
         menu->addItem(tr("Remove Control"), [this, id] {
-            if (v.m_model.remove(v.m_page, id))
-                v.changed();
+            v.removeTile(id);
         });
         menu->popupAt(window(), mapToWindow(hover));
     }
@@ -510,7 +523,7 @@ private:
     void visitGallery(ui::Painter *painter)
     {
         const auto r = v.catalogRect();
-        const auto ink = kCatalogInk;
+        const auto ink = catalogInk();
         const auto soft = ink.withAlpha(.80);
         if (painter) {
             painter->save();
@@ -590,7 +603,7 @@ private:
                 previews.push_back({def, def->initial, rect});
                 const auto body = ui::toBase(rect);
                 if (body.intersects(viewport))
-                    previewLenses.push_back({body, radius(rect), .23f, float(v.m_catalogReveal), viewport});
+                    previewLenses.push_back({body, radius(rect), panel::dark() ? .35f : .23f, float(v.m_catalogReveal), viewport});
                 return;
             }
             if (rect.bottom() + 39 < clip.y || rect.y >= clip.bottom())
@@ -695,15 +708,15 @@ private:
                     addPreviewAt(def, {left + 8 + step * column, top + dy,
                                       step * span.width() - gap, step * span.height() - gap});
                 };
-                recommendation("home", 0, 0);
-                recommendation("keyboard", 2, 0);
+                recommendation("overview", 0, 0);
+                recommendation("dark", 2, 0);
                 recommendation("clock", 3, 0);
                 recommendation("wifi", 4, 0);
-                recommendation("shortcut", 2, 144);
+                recommendation("battery", 2, 144);
                 recommendation("media", 4, 157);
                 recommendation("calculator", 0, 270);
                 recommendation("note", 1, 270);
-                recommendation("recognize", 2, 270);
+                recommendation("focus", 2, 270);
                 y = top + 427;
             } else {
                 section("Recommendations", matching([](const auto &def) { return def.recommended; }));
@@ -769,8 +782,8 @@ double ControlCenterView::cell() const { return (canvasWidth() - 2 * kInset - 3 
 
 double ControlCenterView::gridTop() const
 {
-    return kTop + (editing() ? kEditorHeader : m_users->isVisible()
-                    ? m_users->sizeHint().height + 9 : 0);
+    const double live = m_users->users().empty() ? 0 : m_users->sizeHint().height + 9;
+    return kTop + live + (kEditorHeader - live) * editorProgress();
 }
 
 int ControlCenterView::rows() const { return std::max(editing() ? 8 : 1, page().rows()); }
@@ -805,9 +818,9 @@ ui::RectF ControlCenterView::catalogRect() const
 
 ui::RectF ControlCenterView::editRect() const
 {
-    const double width = editing() ? 86 : 172;
+    const double width = editing() ? 76 : 125;
     return {canvasX() + (editing() ? canvasWidth() - width - kInset : (canvasWidth() - width) / 2),
-            gridTop() + gridViewport() + 20, width, 32};
+            gridTop() + gridViewport() + 12, width, 25};
 }
 
 void ControlCenterView::rebuild(bool animate)
@@ -843,7 +856,13 @@ void ControlCenterView::rebuild(bool animate)
             auto *tile = m_grid->addChild<TileSlider>(tr(controls::find(type)->title));
             tile->setControlStyle(true);
             tile->setHasDetail(!display);
-            tile->onDetail = [this] { if (onSoundDetail) onSoundDetail(); };
+            tile->onDetail = [this, display] {
+                if (display) {
+                    if (activate) activate("display", true);
+                } else if (onSoundDetail) {
+                    onSoundDetail();
+                }
+            };
             tile->slider()->setRange(display ? 1 : 0, display ? 100 : 1, display ? 1 : .01);
             tile->slider()->onMoved = [this, display](double value) {
                 if (display && m_services.brightnessEnabled())
@@ -915,32 +934,79 @@ void ControlCenterView::reveal()
 
 void ControlCenterView::edit(bool enabled)
 {
-    if (editing() == enabled || (enabled && m_maximumWidth < 490))
+    if (m_editTarget == enabled || (enabled && m_maximumWidth < 490))
         return;
+    m_editTarget = enabled;
     m_chrome->cancelDrag();
-    m_chrome->editing = enabled;
-    m_chrome->galleryScroll = m_chrome->sidebarScroll = 0;
-    m_chrome->category.clear();
-    m_chrome->previewLenses.clear();
-    m_chrome->search->setText({});
-    m_scroll = 0;
-    m_catalogReveal = 1;
-    if (enabled && window()) {
+    if (enabled && !editing()) {
+        m_chrome->editing = true;
+        m_chrome->galleryScroll = m_chrome->sidebarScroll = 0;
+        m_chrome->category.clear();
+        m_chrome->previewLenses.clear();
+        m_chrome->search->setText({});
+        m_scroll = 0;
         m_catalogReveal = 0;
-        m_catalogTween = std::make_unique<ui::Animation>(window());
-        m_catalogTween->setDuration(340ms);
-        m_catalogTween->setEasing(ui::Animation::Easing::OutCubic);
-        m_catalogTween->onUpdate = [this](double t) {
-            m_catalogReveal = t;
+    }
+    const auto settle = [this, enabled] {
+        m_catalogReveal = enabled ? 1 : 0;
+        m_chrome->editing = enabled;
+        if (!enabled)
+            m_removed.reset();
+        changed(false);
+    };
+    if (!window()) {
+        settle();
+        return;
+    }
+    const double from = m_catalogReveal;
+    const double to = enabled ? 1 : 0;
+    m_catalogTween = std::make_unique<ui::Animation>(window());
+    m_catalogTween->setDuration(enabled ? 340ms : 250ms);
+    m_catalogTween->setEasing(enabled ? ui::Animation::Easing::OutCubic : ui::Animation::Easing::InOutCubic);
+    m_catalogTween->onUpdate = [this, from, to](double t) {
+        m_catalogReveal = from + (to - from) * t;
+        requestLayout();
+        m_chrome->requestLayout();
+        m_chrome->requestPaint();
+        if (onHeightChanged)
+            onHeightChanged();
+    };
+    m_catalogTween->onFinished = settle;
+    m_catalogTween->start();
+    changed(false);
+}
+
+ui::RectF ControlCenterView::removingRect() const
+{
+    const auto r = m_removed->rect;
+    return inset(r, std::min(r.width, r.height) * .37 * m_removal);
+}
+
+void ControlCenterView::removeTile(int id)
+{
+    const auto *tile = page().tile(id);
+    if (!tile)
+        return;
+    m_removed = RemovedTile {*tile, tileRect(tile->size, tile->cell)};
+    if (!m_model.remove(m_page, id)) {
+        m_removed.reset();
+        return;
+    }
+    if (window()) {
+        m_removal = 0;
+        m_removeTween = std::make_unique<ui::Animation>(window());
+        m_removeTween->setDuration(230ms);
+        m_removeTween->setEasing(ui::Animation::Easing::OutCubic);
+        m_removeTween->onUpdate = [this](double t) {
+            m_removal = t;
             requestLayout();
-            m_chrome->requestLayout();
             m_chrome->requestPaint();
         };
-        m_catalogTween->start();
-    } else if (m_catalogTween) {
-        m_catalogTween->stop();
+        m_removeTween->onFinished = [this] { m_removed.reset(); };
     }
-    changed(false);
+    changed();
+    if (m_removeTween)
+        m_removeTween->start();
 }
 
 bool ControlCenterView::escapeEditor()
@@ -1079,6 +1145,10 @@ ui::Path ControlCenterView::glassShape() const
     ui::Path mask;
     for (const auto &r : m_glassTiles)
         mask.addRoundedRect(r, radius(r), radius(r));
+    if (m_removed && m_removal < 1) {
+        const auto r = removingRect();
+        mask.addRoundedRect(r, radius(r), radius(r));
+    }
     ui::Path clip;
     clip.addRect(gridClip());
     mask = mask.intersected(clip);
@@ -1088,7 +1158,7 @@ ui::Path ControlCenterView::glassShape() const
         ui::Path viewport;
         viewport.addRect({0, 0, catalogWidth(), windowHeight(1)});
         mask.addPath(catalog.intersected(viewport));
-        mask.addRoundedRect({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 52}, 26, 26);
+        mask.addRoundedRect({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 44}, 22, 22);
     } else if (m_users->isVisible()) {
         mask.addRoundedRect(m_users->geometry(), 18, 18);
     }
@@ -1107,10 +1177,14 @@ std::vector<render::GlassLens> ControlCenterView::glassLenses() const
     for (const auto &tile : m_glassTiles)
         if (clip.intersects(ui::toBase(tile)))
             add(tile, radius(tile));
+    if (m_removed && m_removal < 1) {
+        const auto r = removingRect();
+        add(r, radius(r), -1, float(1 - m_removal));
+    }
     if (editing()) {
-        add(catalogRect(), 31, .48f, float(m_catalogReveal));
+        add(catalogRect(), 31, panel::dark() ? .72f : .48f, float(m_catalogReveal));
         pieces.insert(pieces.end(), m_chrome->previewLenses.begin(), m_chrome->previewLenses.end());
-        add({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 52}, 26);
+        add({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 44}, 22);
     } else if (m_users->isVisible()) {
         add(m_users->geometry(), 18);
     }

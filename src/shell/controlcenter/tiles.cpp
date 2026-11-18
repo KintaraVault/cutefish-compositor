@@ -9,8 +9,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <curl/curl.h>
 
+#include "base/file.h"
 #include "base/i18n.h"
+#include "base/thread_pool.h"
 #include "base/url.h"
 #include "shell/controlcenter/panel_style.h"
 #include "ui/animation.h"
@@ -31,6 +35,54 @@ static constexpr std::chrono::milliseconds kChevronFade {150};
 // The light/ artwork's ink, for glyphs drawn in its place.
 static constexpr ui::Color kLightArtwork = ui::Color::rgb(0x383838);
 static constexpr ui::Color kWhite = ui::Color::rgb(0xFFFFFF);
+
+namespace {
+std::shared_ptr<base::file::TemporaryFile> fetchCover(const std::string &url, std::weak_ptr<int> request)
+{
+    if (request.expired())
+        return {};
+    static const bool initialized = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
+    if (!initialized)
+        return {};
+    const auto *runtime = std::getenv("XDG_RUNTIME_DIR");
+    auto file = std::make_shared<base::file::TemporaryFile>(runtime ? runtime : "/tmp", "cutefish-cover-");
+    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
+    if (!curl || !file->isValid())
+        return {};
+    struct Transfer { base::file::TemporaryFile &file; size_t bytes = 0; } transfer {*file};
+    curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, url.starts_with("https://") ? "https" : "http,https");
+    curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 3L);
+    curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 2500L);
+    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, 6500L);
+    curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl.get(), CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl.get(), CURLOPT_XFERINFODATA, &request);
+    curl_easy_setopt(curl.get(), CURLOPT_XFERINFOFUNCTION, +[](void *state, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+        return static_cast<std::weak_ptr<int> *>(state)->expired();
+    });
+    curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &transfer);
+    curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, +[](char *data, size_t size, size_t count, void *state) -> size_t {
+        auto &out = *static_cast<Transfer *>(state);
+        constexpr size_t limit = 8 * 1024 * 1024;
+        if (size && count > (limit - out.bytes) / size)
+            return 0;
+        const size_t bytes = size * count;
+        if (!out.file.write(std::string_view(data, bytes)))
+            return 0;
+        out.bytes += bytes;
+        return bytes;
+    });
+    long status = 0;
+    if (curl_easy_perform(curl.get()) != CURLE_OK || curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status) != CURLE_OK
+            || status < 200 || status >= 300 || !transfer.bytes)
+        return {};
+    return file;
+}
+} // namespace
 
 void SvgIcon::setFile(std::string file)
 {
@@ -185,9 +237,9 @@ ui::RectF CardItem::plateRect() const
 {
     const double padding = ui::Theme::current().largeSpacing;
     if (m_controlStyle) {
-        const double size = m_small ? 30 : 48;
-        return {m_small ? (geometry().width - size) / 2 : 17,
-                m_small || !m_large ? (geometry().height - size) / 2 : 17, size, size};
+        const double size = m_small ? 23 : 33;
+        return {m_small ? (geometry().width - size) / 2 : 10,
+                m_small || !m_large ? (geometry().height - size) / 2 : 10, size, size};
     }
     return {padding, (geometry().height - kPlateSize) / 2, kPlateSize, kPlateSize};
 }
@@ -221,10 +273,10 @@ void CardItem::layout()
     const ui::Theme &theme = ui::Theme::current();
     // A theme change relays the card out; the artwork follows it here.
     updateIcon();
-    const double padding = m_controlStyle ? 17 : theme.largeSpacing;
+    const double padding = m_controlStyle ? 10 : theme.largeSpacing;
     const double height = geometry().height;
     const ui::RectF slot = plateRect();
-    const double size = m_controlStyle ? std::min(m_small ? 32.0 : 28.0, height * .39) : kIconSize;
+    const double size = m_controlStyle ? (m_small ? 19 : 20) : kIconSize;
     const ui::RectF icon {slot.x + (slot.width - size) / 2, slot.y + (slot.height - size) / 2, size, size};
     m_svg->setGeometry(icon);
     m_glyph->setSize(size);
@@ -233,12 +285,12 @@ void CardItem::layout()
     m_themeGlyph->setGeometry(icon);
     if (m_controlStyle) {
         m_title->setVisible(!m_small);
-        m_title->setFontSize(15);
+        m_title->setFontSize(12);
         m_title->setWeight(600);
         m_title->setColor(m_checked && m_large ? kLightArtwork : kWhite);
     }
 
-    m_status->setFontSize(m_controlStyle ? 14 : theme.smallFontSize());
+    m_status->setFontSize(m_controlStyle ? 10 : theme.smallFontSize());
     m_status->setColor(m_controlStyle ? (m_checked && m_large ? kLightArtwork : kWhite).withAlpha(.75)
                                       : panel::secondaryTextColor());
     m_status->setVisible(!m_small && !m_status->text().empty());
@@ -253,7 +305,7 @@ void CardItem::layout()
         if (!m_controlStyle)
             right -= size + theme.smallSpacing;
     }
-    const double x = m_large ? padding : slot.x + slot.width + theme.smallSpacing * 1.25;
+    const double x = m_large ? padding : slot.x + slot.width + (m_controlStyle ? 5 : theme.smallSpacing * 1.25);
     const double width = std::max(0.0, right - x);
     const double titleHeight = m_title->sizeHint().height;
     const double statusHeight = m_status->isVisible() ? m_status->sizeHint().height : 0;
@@ -294,12 +346,17 @@ void CardItem::pointerPress(const ui::PointerEvent &event)
     if (event.button != ui::MouseButton::Left)
         return;
     m_pressed = true;
-    m_platePressed = !m_hasDetail || (!m_small && onPlate(event.position));
+    m_platePressed = m_controlStyle || !m_hasDetail || (!m_small && onPlate(event.position));
     requestPaint();
 }
 
 void CardItem::pointerRelease(const ui::PointerEvent &event)
 {
+    if (m_controlStyle && event.button == ui::MouseButton::Right) {
+        if (m_hasDetail && onDetail)
+            onDetail();
+        return;
+    }
     if (event.button != ui::MouseButton::Left || !m_pressed)
         return;
     m_pressed = false;
@@ -309,6 +366,11 @@ void CardItem::pointerRelease(const ui::PointerEvent &event)
             && event.position.y < rect.height;
     if (!inside)
         return;
+    if (m_controlStyle) {
+        if (onClicked)
+            onClicked();
+        return;
+    }
     if (m_platePressed) {
         if ((!m_hasDetail || onPlate(event.position)) && onClicked)
             onClicked();
@@ -404,13 +466,17 @@ MediaTile::MediaTile()
 {
     m_cover = addChild<SvgIcon>();
     m_art = addChild<ui::ImageView>();
+    m_art->setName("media-cover-image");
     m_art->setFillMode(ui::ImageView::FillMode::PreserveAspectFit);
     m_art->setCornerRadius(ui::Theme::current().smallRadius, ui::Corners::Continuous);
     m_art->setVisible(false);
     m_art->onStatusChanged = [this](ui::ImageView::Status status) {
+        if (status == ui::ImageView::Status::Null)
+            return;
         m_artReady = status == ui::ImageView::Status::Ready;
+        m_artLoading = status == ui::ImageView::Status::Loading;
         m_art->setVisible(m_artReady);
-        m_cover->setVisible(!m_artReady);
+        animateArtwork();
         requestPaint();
     };
     m_title = addChild<ui::Label>();
@@ -436,6 +502,8 @@ MediaTile::MediaTile()
     setState({});
 }
 
+MediaTile::~MediaTile() = default;
+
 void MediaTile::setState(const MediaState &state)
 {
     m_state = state;
@@ -451,6 +519,7 @@ void MediaTile::setState(const MediaState &state)
     m_title->setText(std::move(title));
     m_artist->setText(state.hasPlayer ? state.artist : std::string());
     updateArtwork();
+    loadArtwork();
     requestLayout();
 }
 
@@ -466,22 +535,78 @@ void MediaTile::updateArtwork()
     for (IconButton *button : {m_previous, m_play, m_next})
         button->setSurfaceColor(panel::tileInkColor());
 
-    // Album art from a file; anything else keeps the default cover.
+}
+
+void MediaTile::loadArtwork()
+{
+    const std::string url = m_state.hasPlayer ? m_state.artUrl : std::string();
+    if (url == m_artUrl)
+        return;
+    m_artUrl = url;
+    m_artRequest.reset();
+    m_art->setSource({});
+    m_artFile.reset();
+    m_artReady = false;
+    m_artLoading = !url.empty();
+    m_art->setVisible(false);
+    m_cover->setVisible(true);
     std::string path;
-    if (m_state.hasPlayer && base::url::isLocalFile(m_state.artUrl))
-        path = base::url::toLocalFile(m_state.artUrl).value_or(std::string());
-    else if (m_state.hasPlayer && m_state.artUrl.starts_with("/"))
-        path = m_state.artUrl;
-    if (path != m_art->source()) {
-        m_artReady = false;
-        m_art->setVisible(false);
-        m_cover->setVisible(true);
+    if (base::url::isLocalFile(url))
+        path = base::url::toLocalFile(url).value_or(std::string());
+    else if (url.starts_with('/'))
+        path = url;
+    if (!path.empty()) {
         m_art->setSource(path);
+    } else if (url.starts_with("https://") || url.starts_with("http://")) {
+        static base::ThreadPool pool(2);
+        m_artRequest = std::make_shared<int>();
+        std::weak_ptr<int> request = m_artRequest;
+        pool.run([url, request] { return fetchCover(url, request); },
+                 [this, request](std::shared_ptr<base::file::TemporaryFile> file) {
+            if (request.expired())
+                return;
+            m_artFile = file;
+            if (file) {
+                m_art->setSource(file->path());
+            } else {
+                m_artLoading = false;
+                animateArtwork();
+                requestPaint();
+            }
+        }).detach();
+    } else {
+        m_artLoading = false;
     }
+    animateArtwork();
+}
+
+void MediaTile::animateArtwork()
+{
+    if (!window())
+        return;
+    m_artAnimation = std::make_unique<ui::Animation>(window());
+    m_artPhase = 0;
+    if (m_artReady) {
+        m_art->setOpacity(0);
+        m_artAnimation->setDuration(std::chrono::milliseconds(280));
+        m_artAnimation->setEasing(ui::Animation::Easing::OutCubic);
+        m_artAnimation->onUpdate = [this](double t) { m_art->setOpacity(t); m_artPhase = t; requestPaint(); };
+        m_artAnimation->onFinished = [this] { m_cover->setVisible(false); };
+    } else if (m_artLoading) {
+        m_artAnimation->setDuration(std::chrono::milliseconds(850));
+        m_artAnimation->setEasing(ui::Animation::Easing::Linear);
+        m_artAnimation->setLoops(ui::Animation::Infinite);
+        m_artAnimation->onUpdate = [this](double t) { m_artPhase = t; requestPaint(); };
+    } else {
+        return;
+    }
+    m_artAnimation->start();
 }
 
 void MediaTile::layout()
 {
+    if (!m_artAnimation && (m_artReady || m_artLoading))
+        animateArtwork();
     const ui::Theme &theme = ui::Theme::current();
     updateArtwork();
     const double padding = theme.largeSpacing;
@@ -489,21 +614,22 @@ void MediaTile::layout()
         const double h = geometry().height;
         const double w = geometry().width;
         const double cover = std::min(53.0, h * .29);
-        const ui::RectF art {17, 17, cover, cover};
+        const ui::RectF art {10, 10, cover, cover};
         m_cover->setOpacity(0);
         m_cover->setGeometry(art);
         m_art->setGeometry(art);
         m_art->setSourceSize({cover, cover});
         m_title->setWeight(650);
-        m_title->setFontSize(16);
+        m_title->setFontSize(12);
         m_title->setColor(kWhite);
-        m_title->setGeometry({17, h - (m_artist->text().empty() ? 88 : 100), w - 34, 23});
+        m_title->setGeometry({10, h - (m_artist->text().empty() ? 53 : 64), w - 20, 18});
         m_artist->setVisible(!m_artist->text().empty());
         m_artist->setColor(kWhite.withAlpha(.74));
-        m_artist->setGeometry({17, h - 77, w - 34, 17});
+        m_artist->setFontSize(10);
+        m_artist->setGeometry({10, h - 46, w - 20, 14});
         const double slot = std::min(34., w / 5);
         for (size_t i = 0; i < 3; ++i)
-            std::array {m_previous, m_play, m_next}[i]->setGeometry({w * (i + 1) / 4 - slot / 2, h - 36 - slot / 2, slot, slot});
+            std::array {m_previous, m_play, m_next}[i]->setGeometry({w * (i + 1) / 4 - slot / 2, h - 19 - slot / 2, slot, slot});
         m_play->setOpacity(m_play->isEnabled() ? 1 : .68);
         return;
     }
@@ -540,7 +666,7 @@ void MediaTile::paint(ui::Painter &painter)
 {
     if (!m_controlStyle)
         panel::paintTile(painter, localRect());
-    if (m_artReady)
+    if (m_artReady && m_artPhase >= 1)
         return;
     // The cards' plate colour under the default cover, inside its mask.
     const ui::Color surface = panel::tileInkColor();
@@ -548,6 +674,14 @@ void MediaTile::paint(ui::Painter &painter)
     painter.fillRoundedRect(art, m_controlStyle ? 11 : ui::Theme::current().smallRadius,
                             m_controlStyle ? kWhite.withAlpha(.12) : panel::on(surface, panel::isDark(surface) ? 0.15 : 0.1),
                             ui::Corners::Continuous);
+    if (m_artLoading && m_controlStyle) {
+        const ui::PointF c {art.x + art.width / 2, art.y + art.height / 2};
+        for (int i = 0; i < 12; ++i) {
+            const double angle = (i / 12. + m_artPhase) * 6.283185307;
+            painter.fillRoundedRect({c.x + 9 * std::cos(angle) - 1.4, c.y + 9 * std::sin(angle) - 1.4, 2.8, 2.8},
+                                    1.4, kWhite.withAlpha(.15 + .7 * i / 11));
+        }
+    }
 }
 
 std::string deviceUsageText(const DeviceUser &user)

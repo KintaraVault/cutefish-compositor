@@ -40,6 +40,7 @@ constexpr size_t kMaximumWidgets = 18;
 
 ui::Color accent() { return ui::Theme::current().highlight; }
 ui::Color ink(double alpha = 1) { return ui::Color::rgb(0xffffff).withAlpha(alpha); }
+ui::Color galleryInk(double alpha = 1) { return panel::dark() ? ink(alpha) : ui::Color::rgb(0x171622).withAlpha(alpha); }
 
 render::GlassParams widgetGlass()
 {
@@ -297,10 +298,6 @@ public:
         setTracksHover(true);
         m_search = addChild<ui::SearchField>(tr("Search Widgets"));
         m_search->setName("widget-search");
-        m_search->setFill(ui::ColorRecipe(ink(.14)));
-        m_search->setGlyphColor(ui::ColorRecipe(ink(.80)));
-        m_search->setTextColor(ui::ColorRecipe(ink()));
-        m_search->setPlaceholderColor(ui::ColorRecipe(ink(.76)));
         m_search->setFontSize(15);
         m_search->onTextChanged = [this] {
             const auto kinds = filtered();
@@ -332,11 +329,19 @@ protected:
     bool acceptsPointer() const override { return true; }
     bool acceptsFocus() const override { return true; }
 
-    void layout() override { m_search->setGeometry({24, 23, sidebar() - 48, 36}); }
+    void layout() override
+    {
+        m_search->setFill(ui::ColorRecipe(panel::dark() ? ink(.14) : ink(.82)));
+        m_search->setGlyphColor(ui::ColorRecipe(galleryInk(.80)));
+        m_search->setTextColor(ui::ColorRecipe(galleryInk()));
+        m_search->setPlaceholderColor(ui::ColorRecipe(galleryInk(.76)));
+        m_search->setGeometry({24, 23, sidebar() - 48, 36});
+    }
 
     void paint(ui::Painter &painter) override
     {
         const auto width = geometry().width;
+        const auto ink = [](double alpha = 1.) { return galleryInk(alpha); };
         const auto height = geometry().height;
         const auto side = sidebar();
         painter.save();
@@ -345,7 +350,7 @@ protected:
         painter.fillRect({side, 0, 1, height}, ink(.17));
         const auto r = doneRect();
         painter.fillRoundedRect(r, r.height / 2, accent().withAlpha(contains(r, m_hover) ? 1 : .85));
-        text(painter, r, tr("Done"), 11, ink(), true, true);
+        text(painter, r, tr("Done"), 11, ui::Color::rgb(0xffffff), true, true);
         const auto kinds = filtered();
         auto all = kindRect(0);
         if (m_all || contains(all, m_hover))
@@ -635,6 +640,7 @@ DesktopWidgets::DesktopWidgets(Shell *shell, ControlCenter &controls, std::strin
                                                                 {position->x, position->y}, {}, nullptr}));
     }
     m_outputChanged = m_shell->outputsChanged.connect([this] { updateOutput(); });
+    m_themeChanged = ui::Theme::changed().connect([this] { updateOutput(); repaint(); });
     m_batteryChanged = m_controls.dataChanged.connect([this] { repaint(); });
     m_tick.onTimeout = [this] { repaint(); };
     m_tick.start(1s);
@@ -693,9 +699,12 @@ void DesktopWidgets::updateOutput()
         const int h = std::min(420, screen.height() - 24);
         m_gallery->setOutput(output->name);
         m_galleryView->setRestingGeometry({screen.x() + (screen.width() - w) / 2, screen.bottom() - h - 8, w, h});
+        const bool dark = panel::dark();
         auto galleryGlass = widgetGlass();
-        galleryGlass.tintAlpha = .16f;
-        galleryGlass.highlightRollOff = .73f;
+        galleryGlass.tintRed = galleryGlass.tintGreen = galleryGlass.tintBlue = dark ? .055f : 1.f;
+        galleryGlass.tintAlpha = dark ? .72f : .53f;
+        galleryGlass.shadowLift = 0;
+        galleryGlass.highlightRollOff = 0;
         ui::Path shape;
         shape.addRoundedRect({0, 0, double(w), double(h)}, kRadius, kRadius);
         m_gallery->setBackgroundBlur({0, 0, w, h}, kRadius, galleryGlass, shape);
@@ -704,10 +713,6 @@ void DesktopWidgets::updateOutput()
 
 void DesktopWidgets::repaint()
 {
-    if (m_dark != panel::dark()) {
-        m_dark = panel::dark();
-        updateOutput();
-    }
     for (const auto &item : m_widgets)
         if (item->card)
             item->card->requestPaint();

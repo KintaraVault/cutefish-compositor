@@ -31,7 +31,7 @@ class TileSlider;
 class ControlCenterView : public ui::View
 {
 public:
-    static constexpr double kWidth = 394;
+    static constexpr double kWidth = 263;
     struct State {
         bool available = false;
         bool active = false;
@@ -54,6 +54,8 @@ public:
     std::vector<render::GlassLens> glassLenses() const;
     const std::vector<ui::RectF> &glassTiles() const { return m_glassTiles; }
     bool editing() const;
+    double editorProgress() const { return editing() ? m_catalogReveal : 0.; }
+    double liveWidth() const { return canvasWidth(); }
     bool escapeEditor();
     void edit(bool enabled);
     void selectPage(int page);
@@ -107,6 +109,8 @@ private:
     ui::RectF catalogRect() const;
     ui::RectF editRect() const;
     void scrollGrid(double delta);
+    void removeTile(int id);
+    ui::RectF removingRect() const;
 
     ControlCenterServices &m_services;
     controls::Layout &m_model;
@@ -125,6 +129,11 @@ private:
     double m_scroll = 0;
     double m_catalogReveal = 1;
     std::unique_ptr<ui::Animation> m_catalogTween;
+    bool m_editTarget = false;
+    struct RemovedTile { controls::Tile tile; ui::RectF rect; };
+    std::optional<RemovedTile> m_removed;
+    double m_removal = 1;
+    std::unique_ptr<ui::Animation> m_removeTween;
 };
 
 // The control centre's pages: the tiles, and a tile's detail page (the

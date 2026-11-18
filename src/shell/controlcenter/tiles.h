@@ -15,6 +15,8 @@
 #include "ui/icon.h"
 #include "ui/view.h"
 
+namespace cutefish::base::file { class TemporaryFile; }
+
 namespace cutefish::ui {
 class Animation;
 class ImageView;
@@ -58,9 +60,8 @@ private:
 };
 
 // A toggle tile: a round plate with the glyph, a
-// title and a status line. The whole card clicks. A card with a detail page
-// shows a chevron at its end while hovered; there only the plate toggles, and
-// a click anywhere else on the card opens the page.
+// title and a status line. In Control Center the whole card toggles on left
+// click; right click opens its detail page where available.
 class CardItem : public ui::View
 {
 public:
@@ -160,6 +161,7 @@ public:
     static constexpr double kHeight = 60;
 
     MediaTile();
+    ~MediaTile() override;
 
     void setControlStyle(bool enabled) { m_controlStyle = enabled; }
     void setState(const MediaState &state);
@@ -180,6 +182,8 @@ protected:
 
 private:
     void updateArtwork();
+    void loadArtwork();
+    void animateArtwork();
 
     MediaState m_state;
     SvgIcon *m_cover;
@@ -191,6 +195,12 @@ private:
     IconButton *m_next;
     bool m_artReady = false;
     bool m_controlStyle = false;
+    bool m_artLoading = false;
+    double m_artPhase = 0;
+    std::string m_artUrl;
+    std::shared_ptr<base::file::TemporaryFile> m_artFile;
+    std::shared_ptr<int> m_artRequest;
+    std::unique_ptr<ui::Animation> m_artAnimation;
 };
 
 // The applications behind the bar's privacy dot, with one compact row per app.

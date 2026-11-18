@@ -117,7 +117,9 @@ vec4 softBackdrop(vec2 position, vec2 uv, vec2 margin) {
     vec2 remaining = (uLens.zw - position) / uRim.y;
     float horizontal = smoothstep(0.0, 68.0, pos.x) * smoothstep(0.0, 20.0, remaining.x);
     float vertical = smoothstep(0.0, 52.0, pos.y) * smoothstep(0.0, 65.0, remaining.y);
-    float dim = mix(0.16, 0.31, smoothstep(0.20, 0.85, luminance(color)));
+    // A bright scene already separates the darker lenses from the gutters;
+    // keep the wide blur but don't leave a dark sheet across that backdrop.
+    float dim = mix(0.16, 0.19, smoothstep(0.20, 0.85, luminance(color)));
     return vec4(color * (1.0 - dim), 1.0) * (horizontal * vertical * uOpacity);
 }
 
@@ -152,8 +154,8 @@ vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
     float incident = dot(outward, light);
     float key = pow(max(incident, 0.0), 2.1);
     float bounce = pow(max(-incident, 0.0), 1.75);
-    float crestStart = mix(0.48, 0.10, key) * pixel;
-    float crestEnd = crestStart + mix(0.82, 1.22, max(key, bounce)) * pixel;
+    float crestStart = mix(0.40, 0.10, key) * pixel;
+    float crestEnd = crestStart + mix(0.68, 1.05, max(key, bounce)) * pixel;
     float lip = rimBand(d, crestStart, crestEnd, outward);
     float shoulder = smoothstep(crestStart - .5, crestEnd, d)
                    * exp(-max(d - crestEnd, 0.0) / max(pixel, band * (0.25 + .18 * key)));
@@ -170,7 +172,9 @@ vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
     // Compress the brightest glints instead of clipping a channel at the rim.
     color += (1.0 - exp(-caustic * energy)) * (1.0 - color);
     float silhouette = 1.0 - smoothstep(-0.30 * pixel, 0.82 * pixel, d);
-    return clamp(color * (1.0 - weight * silhouette * mix(0.13, 0.44, ambient)), 0.0, 1.0);
+    // A pale backdrop has a luminous edge rather than a black keyline. On
+    // saturated backdrops the outer ray keeps the hue through the shoulder.
+    return clamp(color * (1.0 - weight * silhouette * mix(0.17, 0.08, ambient)), 0.0, 1.0);
 }
 
 // Sample each ray before averaging: averaging offsets loses the pixel footprint

@@ -155,6 +155,7 @@ target_link_libraries(cutefish-shell-launchpad-view PUBLIC cutefish-shell cutefi
     cutefish-shell-wallpaper)
 # The control centre, the status panels and the power dialog.
 find_package(CutefishClients REQUIRED COMPONENTS networkmanager bluez audio)
+pkg_check_modules(MediaCurl REQUIRED IMPORTED_TARGET libcurl>=7.85)
 add_library(cutefish-shell-controlcenter STATIC
     src/shell/controlcenter/control_center.cpp
     src/shell/controlcenter/control_center.h
@@ -180,7 +181,7 @@ add_library(cutefish-shell-controlcenter STATIC
 )
 target_link_libraries(cutefish-shell-controlcenter PUBLIC cutefish-shell cutefish-shell-osd
     cutefish-shell-menubar cutefish-shell-notification Cutefish::NetworkManagerClient
-    Cutefish::BluezClient Cutefish::AudioClient PRIVATE PkgConfig::TitleText)
+    Cutefish::BluezClient Cutefish::AudioClient PRIVATE PkgConfig::TitleText PkgConfig::MediaCurl)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-controlcenter)
 add_library(cutefish-shell-widgets STATIC
     src/shell/widgets/desktop_widgets.cpp

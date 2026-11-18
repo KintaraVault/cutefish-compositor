@@ -26,6 +26,7 @@
 #include "ui/embedded_window.h"
 #include "ui/keys.h"
 #include "ui/popup_glass.h"
+#include "ui/animation.h"
 #include "ui/theme.h"
 #include "ui/window.h"
 #include "wm/window.h"
@@ -95,6 +96,10 @@ ControlCenter::ControlCenter(Shell *shell, std::unique_ptr<ControlCenterServices
             m_open[0].pager->detailPage()->setMaximumHeight(detailMaximumHeight());
     }));
     m_subscriptions.push_back(ui::Application::instance()->languageChanged.connect([this] { retranslate(); }));
+    m_subscriptions.push_back(ui::Theme::changed().connect([this] {
+        refresh();
+        updateWindow(Panel::ControlCenter);
+    }));
     m_audio = audio();
     m_network = network();
     m_bluetooth = bluetooth();
@@ -104,8 +109,10 @@ ControlCenter::~ControlCenter()
 {
     *m_alive = false;
     m_subscriptions.clear();
-    for (Open &open : m_open)
+    for (Open &open : m_open) {
+        open.closeTween.reset();
         open.window.reset();
+    }
     m_powerDialog.reset();
 }
 
@@ -146,7 +153,7 @@ ControlCenterView::State ControlCenter::state(std::string_view type) const
         return {charge >= 0, charge >= 0 && m_services->onBattery(), charge >= 0 ? std::to_string(charge) + "%" : tr("Unavailable")};
     }
     if (type == "lock") return {m_powerActions != nullptr, false, {}};
-    if (type == "mirror" || type == "accessibility" || type == "corners") return {true, false, tr("Settings")};
+    if (type == "accessibility" || type == "corners") return {true, false, tr("Settings")};
     if (type == "night") return toggle(m_services->nightLightAvailable(), m_services->nightLightEnabled());
     if (const auto it = m_actions.find(std::string(type)); it != m_actions.end())
         return it->second.active ? toggle(true, it->second.active()) : ControlCenterView::State {true, false, {}};
@@ -176,7 +183,7 @@ void ControlCenter::activate(std::string_view type, bool detail)
         m_services->setNightLightEnabled(!current.active);
     } else if (type == "battery") {
         showDetail(Panel::Battery);
-    } else if (type == "display" || type == "mirror" || type == "accessibility" || type == "corners") {
+    } else if (type == "display" || type == "accessibility" || type == "corners") {
         closePanels();
         m_services->openSettings({"-m", type == "accessibility" ? "accessibility" : type == "corners" ? "hotcorners" : "display"});
     } else if (type == "media") {
@@ -284,7 +291,7 @@ bool ControlCenter::isOpen(Panel panel) const
     if (!hasPanel(panel))
         return false;
     const Open &open = m_open[index(panel)];
-    return open.window && !open.window->isHidden();
+    return open.window && !open.closing && !open.window->isHidden();
 }
 
 bool ControlCenter::isPanelChecked(Panel panel) const
@@ -358,9 +365,15 @@ base::Rect ControlCenter::panelGeometry(Panel panel, ShellWindow *bar, const bas
         const double scale = bar ? bar->scale() : 1;
         const int height = m_open[0].pager ? int(m_open[0].pager->windowHeight(scale)) : 0;
         const bool editing = m_open[0].controlCenter && m_open[0].controlCenter->editing();
+        const int liveWidth = m_open[0].controlCenter ? int(m_open[0].controlCenter->liveWidth()) : width;
+        const int liveX = std::max(screen.x() + margin, std::min(position.x(), screen.right() - liveWidth - 12));
         const int right = editing && screen.width() - width >= 174 ? 87 : 12;
         int x = std::min(position.x(), screen.x() + screen.width() - width - right);
         x = std::max(x, screen.x() + margin);
+        if (editing) {
+            const auto *view = m_open[0].controlCenter;
+            x = int(std::lround(std::lerp(double(liveX + liveWidth - width), double(x), view->editorProgress())));
+        }
         // The bar sits at the top of its own screen, which need not be at y 0.
         return base::Rect(x, screen.y() + kBarHeight + margin, width, height);
     }
@@ -386,7 +399,7 @@ void ControlCenter::open(Panel panel, ShellWindow *bar, const base::Rect &anchor
         return;
     Open &open = m_open[index(panel)];
     if (open.window)
-        close(panel);
+        finishClosing(panel);
 
     std::unique_ptr<ui::View> content;
     switch (panel) {
@@ -509,19 +522,23 @@ void ControlCenter::updateWindow(Panel panel)
         shape = open.controlCenter->glassShape();
         material = popupGlass(1, 1, 1, .024);
         material.blurSigma = 7.5f;
-        material.saturation = 1.62f;
+        material.saturation = 1.48f;
         material.shadowLift = .12f;
-        material.highlightRollOff = .54f;
-        material.bevel = 10;
-        material.depth = 10;
-        material.displacement = 12;
+        material.highlightRollOff = .49f;
+        material.bevel = 8;
+        material.depth = 8;
+        material.displacement = 10;
         material.chroma = .015f;
         material.lightAngle = 237;
         material.rim = .94f;
         material.backdropReflection = 1.f;
         material.lenses = open.controlCenter->glassLenses();
         material.underlay = open.controlCenter->glassUnderlay();
+        if (open.controlCenter->editing() && open.dark) {
+            material.tintRed = material.tintGreen = material.tintBlue = .055f;
+        }
     }
+    material.opacity *= float(open.visibility);
     window->setBackgroundBlur(base::Rect(0, 0, open.geometry.width(), height),
                               int(panel::kPanelRadius), material, shape);
 }
@@ -542,7 +559,7 @@ void ControlCenter::fitToWorkArea(Panel panel)
 void ControlCenter::resizeControlCenter()
 {
     Open &open = m_open[0];
-    if (!open.window || !open.pager)
+    if (!open.window || !open.pager || open.closing)
         return;
     const base::Rect geometry = panelGeometry(Panel::ControlCenter, open.bar, open.anchor);
     if (geometry == open.geometry)
@@ -605,8 +622,42 @@ void ControlCenter::escape(Panel panel)
 void ControlCenter::close(Panel panel)
 {
     Open &open = m_open[index(panel)];
+    if (!open.window || open.closing)
+        return;
+    auto *window = popupWindow(panel);
+    if (panel != Panel::ControlCenter || !window || open.window->isHidden()) {
+        finishClosing(panel);
+        return;
+    }
+    open.closing = true;
+    window->setInputRegion(base::Region());
+    auto *closing = open.window.get();
+    open.closeTween = std::make_unique<ui::Animation>(closing);
+    open.closeTween->setDuration(std::chrono::milliseconds(180));
+    open.closeTween->setEasing(ui::Animation::Easing::InQuad);
+    open.closeTween->onUpdate = [this, panel](double t) {
+        auto &retiring = m_open[index(panel)];
+        retiring.visibility = 1 - t;
+        retiring.root->setOpacity(1 - t);
+        retiring.window->setPopupPlacement(placementAt(retiring.bar, retiring.geometry.translated({0, -int(std::lround(12 * t))})));
+        updateWindow(panel);
+    };
+    open.closeTween->onFinished = [this, panel, closing, alive = m_alive] {
+        core::mainLoop()->post([this, panel, closing, alive] {
+            if (*alive && m_open[index(panel)].closing && m_open[index(panel)].window.get() == closing)
+                finishClosing(panel);
+        });
+    };
+    open.closeTween->start();
+    panelsChanged();
+}
+
+void ControlCenter::finishClosing(Panel panel)
+{
+    Open &open = m_open[index(panel)];
     if (!open.window)
         return;
+    open.closeTween.reset();
     if (open.panel) {
         open.panel->onShownBottomChanged = nullptr;
         open.panel->onCloseRequested = nullptr;

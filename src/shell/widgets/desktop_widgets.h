@@ -50,7 +50,7 @@ private:
     std::vector<std::unique_ptr<Widget>> m_widgets;
     std::unique_ptr<ShellWindow> m_gallery;
     Gallery *m_galleryView = nullptr;
-    bool m_dark = false;
+    base::Subscription m_themeChanged;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };
 
