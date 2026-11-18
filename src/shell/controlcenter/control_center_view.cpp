@@ -837,16 +837,6 @@ private:
         }
         if (painter) {
             painter->restore();
-            const auto scrollThumb = [&](ui::RectF viewport, double scroll, double content) {
-                if (viewport.height <= 0 || content <= viewport.height)
-                    return;
-                const double length = std::min(viewport.height, std::max(23., viewport.height * viewport.height / content));
-                const double y = viewport.y + (viewport.height - length) * scroll / (content - viewport.height);
-                painter->fillRoundedRect({viewport.right() - 4, y, 3, length}, 1.5,
-                                         ink.withAlpha(contains(viewport, hover) ? .34 : .17));
-            };
-            scrollThumb(side, sidebarScroll, sidebarHeight);
-            scrollThumb(clip, galleryScroll, galleryHeight);
             painter->restore();
         } else {
             galleryHeight = y - clip.y + galleryScroll;
