@@ -14,6 +14,8 @@
 
 namespace cutefish::render {
 
+enum class GlassFinish { Lens, FrostedLight, FrostedDark };
+
 // Separate lenses over one filtered backdrop, positioned relative to the blur
 // rectangle. The surface's path still defines their combined coverage.
 struct GlassLens {
@@ -24,6 +26,7 @@ struct GlassLens {
     // A lens inside a larger masked sheet needs its own rounded coverage and
     // may be cut off by the sheet's scrolling viewport.
     std::optional<base::RectF> viewport;
+    GlassFinish finish = GlassFinish::Lens;
 
     bool operator==(const GlassLens &) const = default;
 };

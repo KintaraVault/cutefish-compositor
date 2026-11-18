@@ -1351,7 +1351,8 @@ std::vector<render::GlassLens> ControlCenterView::glassLenses() const
         add(r, radius(r), -1, float(1 - m_removal));
     }
     if (editing()) {
-        add(catalogRect(), 31, panel::dark() ? .72f : .48f, float(m_catalogReveal));
+        pieces.push_back({ui::toBase(catalogRect()), 31, -1, float(m_catalogReveal), std::nullopt,
+                          panel::dark() ? render::GlassFinish::FrostedDark : render::GlassFinish::FrostedLight});
         pieces.insert(pieces.end(), m_chrome->previewLenses.begin(), m_chrome->previewLenses.end());
         if (editorProgress() > 0)
             add(editorHeaderRect(), kEditorHeaderHeight / 2, -1, float(editorProgress()));

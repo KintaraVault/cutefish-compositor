@@ -647,7 +647,7 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     const auto drawLens = [&](const base::Rect &quad, const base::RectF &body, double r, float tint, float opacity,
-                              bool nested = false) {
+                              bool nested = false, GlassFinish finish = GlassFinish::Lens) {
         glUniform4f(program.uniform("uSampleRect"),
                     float(quad.x() - coverage.x()) / coverage.width() * u,
                     float(quad.y() - coverage.y()) / coverage.height() * v,
@@ -658,6 +658,8 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
                     std::clamp(r, 0., std::min(body.width(), body.height()) / 2));
         if (glass.enabled) {
             glUniform1f(program.uniform("uNestedLens"), nested ? 1.f : 0.f);
+            glUniform1f(program.uniform("uFrosted"), finish == GlassFinish::FrostedDark ? -1.f
+                        : finish == GlassFinish::FrostedLight ? 1.f : 0.f);
             glUniform1f(program.uniform("uOpacity"), std::clamp(glass.opacity * opacity, 0.0f, 1.0f));
             glUniform4f(program.uniform("uLens"), body.x() - quad.x(), body.y() - quad.y(),
                         body.width(), body.height());
@@ -694,7 +696,8 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
                     : bounds;
             const auto quad = body.toEnclosingRect().intersected(bounds).intersected(viewport);
             if (piece.opacity > 0 && !quad.isEmpty() && scissor.intersects(target.framebufferRect(quad)))
-                drawLens(quad, body, piece.radius * scale, piece.tintAlpha, piece.opacity, piece.viewport.has_value());
+                drawLens(quad, body, piece.radius * scale, piece.tintAlpha, piece.opacity,
+                         piece.viewport.has_value(), piece.finish);
         }
     } else {
         drawLens(bounds, base::RectF(lens), radius, -1, 1);

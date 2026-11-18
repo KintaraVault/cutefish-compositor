@@ -30,6 +30,7 @@ uniform float uHasShape;
 uniform vec4 uShapeRect;
 uniform float uOpacity;
 uniform float uNestedLens;
+uniform float uFrosted;
 
 float roundRect(vec2 p, vec2 halfSize, float r) {
     if (uBackdropReflection > 0.0) {
@@ -194,6 +195,53 @@ vec3 refractedAt(vec2 p, vec2 offset, vec2 halfSize, float r, float band,
     return color;
 }
 
+// A thicker diffuser than the separate control lenses. The five binomial taps
+// in each axis integrate over the already softly filtered capture; unlike a
+// second layer of tint, this hides hard edges while keeping broad colour fields.
+float frostWeight(int i) {
+    return i == 0 ? 0.375 : (i == -1 || i == 1 ? 0.25 : 0.0625);
+}
+
+vec3 frostedSheet(vec2 p, vec2 halfSize, float r, float band, float sd, vec2 uv, vec2 margin) {
+    vec2 bend = 0.24 * lensOffset(p, halfSize, r, band) / uCoverage;
+    vec2 stepUv = 25.0 * uRim.y / uCoverage;
+    vec3 scene = vec3(0.0);
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            vec2 sampleUv = clamp(uv + bend + vec2(float(x), float(y)) * stepUv, margin, 1.0 - margin);
+            vec3 sampleColor = backdrop(sampleUv);
+            // Bright content (especially the dock or white windows) shouldn't
+            // burn an opaque white silhouette through the material. Compress
+            // the incident light before integrating it into the diffuser.
+            sampleColor *= 1.0 - 0.32 * smoothstep(0.46, 1.0, luminance(sampleColor));
+            scene += sampleColor * (frostWeight(x) * frostWeight(y));
+        }
+    }
+
+    // Keep wallpaper colour separate from the neutral tone curve. A neutral
+    // backdrop stays neutral, while either theme keeps enough contrast for ink.
+    float y = luminance(scene);
+    vec3 chroma = scene - vec3(y);
+    bool dark = uFrosted < 0.0;
+    float value = dark ? 0.092 + 0.24 * y : 0.53 + 0.32 * y;
+    float spread = dark ? 0.34 : 0.71;
+    float negative = -min(chroma.r, min(chroma.g, chroma.b));
+    float positive = max(chroma.r, max(chroma.g, chroma.b));
+    spread = min(spread, min((value - 0.035) / max(negative, 0.001),
+                            (0.96 - value) / max(positive, 0.001)));
+    vec3 color = vec3(value) + chroma * spread;
+
+    // This is a satin sheet, not another thick tile. Keep a restrained,
+    // scene-coloured glint at the very edge without tracing a separate outline.
+    if (sd > -4.0 * uRim.y && uBackdropReflection > 0.0) {
+        vec2 edge = insideLens(p, halfSize, r);
+        float falloff = smoothstep(-4.0 * uRim.y, -1.5 * uRim.y, sd);
+        color = mix(color, reflectedRim(color, uv, outwardAt(edge, halfSize, r),
+                                      normalAt(edge, halfSize, r, band), sd, band, margin), 0.34 * falloff);
+    }
+    return color;
+}
+
 void shade() {
     vec2 halfSize = uLens.zw * 0.5;
     vec2 p = vTexCoord * uSize - uLens.xy - halfSize;
@@ -209,6 +257,12 @@ void shade() {
     // The roll-off band is bounded so the glass cannot keep curving towards the
     // middle of a large surface.
     float band = clamp(uBevel > 0.0 ? uBevel : r, 1.0, min(halfSize.x, halfSize.y));
+
+    if (abs(uFrosted) > 0.5) {
+        float mask = mix(1.0, texture2D(uShape, uShapeRect.xy + vTexCoord * uShapeRect.zw).a, uHasShape);
+        gl_FragColor = vec4(frostedSheet(p, halfSize, r, band, sd, uv, margin), 1.0) * mask * uOpacity;
+        return;
+    }
 
     // Over the lip the offset changes so fast that neighbouring pixels read far
     // apart in the backdrop, so widen the sampling footprint there.

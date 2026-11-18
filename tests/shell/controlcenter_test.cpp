@@ -449,6 +449,14 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     capture("-warmup");
     test::runFor(std::chrono::milliseconds(390));
     capture("-edit");
+    {
+        const auto appearance = ui::Theme::current();
+        ui::Theme::setCurrent(ui::Theme::dark());
+        test::runFor(std::chrono::milliseconds(40));
+        capture("-edit-dark");
+        ui::Theme::setCurrent(appearance);
+        test::runFor(std::chrono::milliseconds(40));
+    }
     key(KEY_ESC);
     capture("-editor-exit-start");
     test::runFor(std::chrono::milliseconds(125));
@@ -577,13 +585,21 @@ TEST_F(ControlCenterTest, EditorsFollowThemeAndThePanelClosesWithAFade)
     auto *view = center->controlCenterView();
     view->edit(true);
     frames(std::chrono::milliseconds(390));
+    const auto finishCount = [panel](render::GlassFinish finish) {
+        return std::ranges::count(panel->surface()->glass().lenses, finish, &render::GlassLens::finish);
+    };
     EXPECT_GT(panel->surface()->glass().tintRed, .9f);
+    EXPECT_EQ(1, finishCount(render::GlassFinish::FrostedLight));
+    EXPECT_EQ(0, finishCount(render::GlassFinish::FrostedDark));
     ui::Theme::setCurrent(ui::Theme::dark());
     frames(std::chrono::milliseconds(40));
     EXPECT_LT(panel->surface()->glass().tintRed, .1f);
+    EXPECT_EQ(0, finishCount(render::GlassFinish::FrostedLight));
+    EXPECT_EQ(1, finishCount(render::GlassFinish::FrostedDark));
     view->edit(false);
     frames(std::chrono::milliseconds(300));
     EXPECT_FALSE(view->editing());
+    EXPECT_EQ(0, finishCount(render::GlassFinish::FrostedDark));
 
     shell::DesktopWidgets widgets(shell.get(), *center, directory.filePath("theme-widgets.conf"));
     widgets.edit();

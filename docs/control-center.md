@@ -45,6 +45,9 @@ remains visible between tiles without a solid panel or a second outline.
 The rim uses a pixel footprint aligned with the curve, with separate reflected
 and transmitted highlights to keep a smooth edge at fractional output scales.
 Catalog previews have their own lenses, clipped to the scrolling viewport.
+The catalog sheet behind them diffuses a wider patch of the scene and tones it
+for the current appearance. Wallpaper colour still comes through, but bright
+objects such as the dock and sharp wallpaper seams have less contrast.
 The center, catalog and desktop widgets use separate neutral material settings,
 so the wallpaper supplies their hue. Animations approximate the supplied footage,
 which does not specify easing curves or durations.

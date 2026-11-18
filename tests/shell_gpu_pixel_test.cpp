@@ -192,6 +192,65 @@ TEST_P(ShellGpuPixels, GlassUnderlaySoftensGapsWithoutPaintingASolidPlate)
     EXPECT_NEAR(255, (pixelAt(after, {101, 100}) >> 16) & 0xff, 3);
 }
 
+TEST_P(ShellGpuPixels, FrostedSheetDiffusesTheSceneWithoutChangingNearbyLenses)
+{
+    class CatalogBackdrop : public ui::View {
+        void paint(ui::Painter &painter) override
+        {
+            painter.fillRect(localRect(), ui::Color::rgb(0x272727));
+            painter.fillRect({200, 0, 200, 200}, ui::Color::rgb(0x164fa5));
+            painter.fillRect({0, 148, 400, 35}, ui::Color::rgb(0xffffff));
+        }
+    };
+    shell::ShellWindow wallpaper(shell.get(), wm::WindowRole::Desktop, false);
+    wallpaper.setContentView(std::make_unique<CatalogBackdrop>());
+    wallpaper.setGeometry(kOutput);
+    wallpaper.show();
+
+    shell::ShellWindow panel(shell.get(), wm::WindowRole::Panel, false);
+    panel.window()->setBackgroundColor(ui::ColorRecipe(ui::Color::rgb(0).withAlpha(0)));
+    panel.setContentView(std::make_unique<ui::View>());
+    panel.setGeometry(kOutput);
+    ui::Path mask;
+    mask.addRoundedRect({20, 14, 270, 180}, 22, 22);
+    mask.addRoundedRect({308, 35, 65, 50}, 20, 20);
+    GlassParams material;
+    material.enabled = true;
+    material.blurSigma = 7.5f;
+    material.lenses = {{{20, 14, 270, 180}, 22, .48f}, {{308, 35, 65, 50}, 20}};
+    const auto draw = [&] {
+        panel.setBackgroundBlur(kOutput, 22, material, mask);
+        return frame();
+    };
+    panel.show();
+    const auto standard = draw();
+    material.lenses.front().finish = GlassFinish::FrostedLight;
+    const auto light = draw();
+    material.lenses.front().finish = GlassFinish::FrostedDark;
+    const auto dark = draw();
+
+    EXPECT_EQ(pixelAt(standard, {344, 56}), pixelAt(light, {344, 56}));
+    EXPECT_EQ(pixelAt(standard, {344, 56}), pixelAt(dark, {344, 56}));
+    EXPECT_EQ(pixelAt(standard, {303, 56}), pixelAt(light, {303, 56}));
+    EXPECT_EQ(0xff272727u, pixelAt(light, {20, 14})); // the mask, not a rectangular quad
+    const auto gray = [](uint32_t color) { return int(color & 255); };
+    const auto neutral = pixelAt(light, {66, 66});
+    EXPECT_EQ(gray(neutral), int((neutral >> 8) & 255));
+    EXPECT_EQ(gray(neutral), int((neutral >> 16) & 255));
+    EXPECT_GT(gray(neutral), 135);
+    EXPECT_LT(gray(pixelAt(dark, {66, 66})), 65);
+    for (const auto *image : {&light, &dark}) {
+        const auto blue = pixelAt(*image, {263, 64});
+        EXPECT_GT(gray(blue), int((blue >> 16) & 255) + 24);
+    }
+    const auto delta = [&](const ui::Bitmap &image) {
+        return gray(pixelAt(image, {70, 162})) - gray(pixelAt(image, {70, 120}));
+    };
+    EXPECT_GT(delta(light), 0); // the bright scene still contributes to the material
+    EXPECT_LT(delta(light) * 2, delta(standard));
+    EXPECT_LT(delta(dark) * 2, delta(standard));
+}
+
 TEST_P(ShellGpuPixels, GlassCrestReflectsTheBackdropOnDarkAndColoredScenes)
 {
     shell::ShellWindow wallpaper(shell.get(), wm::WindowRole::Desktop, false);
