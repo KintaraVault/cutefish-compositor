@@ -415,6 +415,15 @@ void ControlCenter::open(Panel panel, ShellWindow *bar, const base::Rect &anchor
         open.controlCenter = view.get();
         view->state = [this](std::string_view type) { return state(type); };
         view->activate = [this](std::string_view type, bool detail) { activate(type, detail); };
+        view->isMenuBarDrop = [this](ui::PointF point) {
+            const auto &open = m_open[index(Panel::ControlCenter)];
+            const auto *popup = popupWindow(Panel::ControlCenter);
+            if (!popup || !open.bar)
+                return false;
+            const auto global = popup->drawnBounds().topLeft() + base::Point(int(std::floor(point.x)), int(std::floor(point.y)));
+            const auto bar = open.bar->drawnBounds();
+            return bar.contains(global) && global.x() >= bar.center().x();
+        };
         view->onModelChanged = [this] { panelsChanged(); };
         view->onGlassChanged = [this] { updateWindow(Panel::ControlCenter); };
         view->refresh();

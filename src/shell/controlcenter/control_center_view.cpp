@@ -28,8 +28,9 @@ constexpr double kInset = 4;
 constexpr double kTop = 12;
 constexpr double kCatalogGap = -1;
 constexpr double kFooter = 39;
-constexpr double kEditorHeader = 50;
+constexpr double kEditorHeader = 68;
 constexpr double kEditorHeaderHeight = 44;
+constexpr double kCatalogFooter = 54;
 constexpr ui::Color kGreen {42, 157, 75, 255};
 constexpr auto kCanvasInk = ui::Color::rgb(0xffffff);
 constexpr auto kCatalogInk = ui::Color::rgb(0x171622);
@@ -80,15 +81,13 @@ void glyph(ui::Painter &painter, const controls::Definition &def, ui::RectF rect
 }
 
 void preview(ui::Painter &painter, const controls::Definition &def, Size size, const ui::RectF &r,
-             const ControlCenterView::State &state, const MediaState &media, bool dragging = false)
+             const ControlCenterView::State &state, const MediaState &media)
 {
     const auto ink = kCanvasInk;
-    if (dragging)
-        painter.drawShadow(r, radius(r), 12, ui::Color {0, 0, 0, 100}, {0, 6});
     const bool solid = state.active && (size == Size::Small || size == Size::Large);
     const auto fg = solid ? kCatalogInk : ink;
-    if (solid || dragging)
-        painter.fillRoundedRect(r, radius(r), solid ? ink.withAlpha(.85) : kCatalogInk.withAlpha(.68));
+    if (solid)
+        painter.fillRoundedRect(r, radius(r), ink.withAlpha(.85));
     if (def.id == "media" && size == Size::Large) {
         painter.fillRoundedRect({r.x + 12, r.y + 12, 36, 36}, 8, panel::textColor(.13));
         text(painter, {r.x + 15, r.bottom() - 83, r.width - 30, 25},
@@ -139,11 +138,25 @@ void pageGlyph(ui::Painter &painter, int icon, ui::RectF rect, ui::Color ink)
 
 class ControlCenterView::Chrome final : public ui::View
 {
+    class CatalogSearch final : public ui::SearchField
+    {
+    public:
+        using ui::SearchField::SearchField;
+        std::function<bool(const ui::KeyEvent &)> navigate;
+    protected:
+        bool keyPress(const ui::KeyEvent &event) override
+        {
+            return (navigate && navigate(event)) || ui::SearchField::keyPress(event);
+        }
+    };
+
 public:
     explicit Chrome(ControlCenterView &owner) : v(owner)
     {
         setTracksHover(true);
-        search = addChild<ui::SearchField>(tr("Search Controls"));
+        auto *field = addChild<CatalogSearch>(tr("Search Controls"));
+        search = field;
+        field->navigate = [this](const auto &event) { return keyPress(event); };
         search->setFontSize(15);
         search->setName("control-search");
         search->setVisible(false);
@@ -164,9 +177,14 @@ public:
 
     void cancelDrag()
     {
+        if (proposed)
+            v.animateTiles();
         held.reset();
         dragging = false;
+        menuBarDrop = false;
         target.reset();
+        candidate.reset();
+        proposed.reset();
         v.requestLayout();
         requestPaint();
     }
@@ -192,8 +210,8 @@ protected:
     void paint(ui::Painter &painter) override
     {
         const auto ink = kCanvasInk;
-        const auto footer = editing ? v.editRect() : localRect();
         if (!editing) {
+            const auto footer = localRect();
             if (contains(footer, hover))
                 painter.fillRoundedRect(footer, footer.height / 2, ink.withAlpha(.10));
             text(painter, footer, tr("Edit Controls"), 11, ink, false, true);
@@ -212,7 +230,7 @@ protected:
             if (reveal == 0)
                 continue;
             for (int x = 0; x < controls::Layout::kColumns; ++x) {
-                if (std::ranges::any_of(v.page().tiles, [&](const Tile &tile) {
+                if (std::ranges::any_of(proposed ? proposed->tiles : v.page().tiles, [&](const Tile &tile) {
                         return tile.bounds().contains(base::Point(x, y));
                     }))
                     continue;
@@ -253,20 +271,19 @@ protected:
             for (size_t i = 0; i < v.m_model.pages().size(); ++i) {
                 const auto r = pageRect(i);
                 const bool selected = v.m_model.pages()[i].id == v.m_page;
-                painter.fillRoundedRect(r, 11, ink.withAlpha(selected ? .23 : .08));
+                painter.fillRoundedRect(r, r.height / 2, ink.withAlpha(selected ? .26 : .09));
                 text(painter, r, std::to_string(i + 1), 8, ink, selected, true);
             }
         }
         painter.restore();
-        text(painter, footer, tr("Done"), 11, ink, true, true);
         visitGallery(&painter);
+        paintCatalogFooter(painter);
 
         if (dragging && held) {
-            const auto r = v.tileRect(held->size, {});
+            const auto r = dragRect();
             const auto *def = controls::find(held->type);
-            preview(painter, *def, held->size,
-                    {hover.x - anchor.x, hover.y - anchor.y, r.width, r.height},
-                    v.state ? v.state(def->id) : State {}, v.m_services.media(), true);
+            painter.drawShadow(r, radius(r), 16, ui::Color{0, 0, 0, 115}, {0, 6});
+            preview(painter, *def, held->size, r, v.state ? v.state(def->id) : State {}, v.m_services.media());
         }
         if (v.m_removed && v.m_removal < 1) {
             const auto &tile = v.m_removed->tile;
@@ -316,32 +333,29 @@ protected:
         setFocus();
         if (const Tile *tile = tileAt(hover)) {
             held = *tile;
+            if (contains(minusRect(*tile), hover))
+                return;
             const auto rect = v.tileRect(tile->size, tile->cell);
             anchor = {hover.x - rect.x, hover.y - rect.y};
         } else if (const auto *item = previewAt(hover)) {
             held = Tile {0, item->def->id, item->size, {}};
             const auto rect = v.tileRect(held->size, {});
-            anchor = {rect.width / 2, rect.height / 2};
+            anchor = {rect.width * std::clamp((hover.x - item->rect.x) / item->rect.width, 0., 1.),
+                      rect.height * std::clamp((hover.y - item->rect.y) / item->rect.height, 0., 1.)};
         }
     }
 
     void pointerMove(const ui::PointerEvent &event) override
     {
         hover = event.position;
-        if (held && !dragging && std::hypot(hover.x - origin.x, hover.y - origin.y) >= 5) {
+        if (held && !dragging && (!held->id || !contains(minusRect(*held), origin))
+                && std::hypot(hover.x - origin.x, hover.y - origin.y) >= 5) {
             dragging = true;
             v.requestLayout();
         }
         if (dragging && held) {
-            target.reset();
-            if (contains(v.gridClip(), hover)) {
-                const double step = v.cell() + v.gap();
-                const auto size = controls::footprint(held->size);
-                const int x = int(std::lround((hover.x - anchor.x - v.canvasX() - kInset) / step));
-                const int y = int(std::lround((hover.y - anchor.y - v.gridTop() + v.m_scroll) / step));
-                target = base::Point(std::clamp(x, 0, controls::Layout::kColumns - size.width()),
-                                     std::clamp(y, 0, controls::Layout::kRows - size.height()));
-            }
+            updateDropTarget();
+            v.requestLayout();
         }
         requestPaint();
     }
@@ -352,16 +366,22 @@ protected:
             return;
         hover = event.position;
         if (dragging && held) {
-            if (target && contains(v.gridClip(), hover)) {
+            updateDropTarget();
+            if (menuBarDrop) {
+                v.m_model.setPin(held->type, controls::Pin::Always);
+                if (v.onModelChanged)
+                    v.onModelChanged();
+            } else if (target && contains(v.gridClip(), hover)) {
                 if (held->id ? v.m_model.move(v.m_page, held->id, *target)
                              : v.m_model.add(v.m_page, held->type, *target)) {
+                    proposed.reset();
                     v.changed();
                 }
             }
             cancelDrag();
             return;
         }
-        const auto footer = editing ? v.editRect() : localRect();
+        const auto footer = editing ? doneRect() : localRect();
         if (contains(footer, hover) && contains(footer, origin)) {
             v.edit(!editing);
         } else if (editing && v.m_editTarget) {
@@ -395,6 +415,11 @@ protected:
 
     bool scroll(const ui::ScrollEvent &event) override
     {
+        if (dragging) {
+            const bool scrolled = v.scroll(event);
+            updateDropTarget();
+            return scrolled;
+        }
         if (editing && contains(v.catalogRect(), hover)) {
             if (contains(sidebarClip(), hover)) {
                 sidebarScroll = std::clamp(sidebarScroll + event.deltaY, 0.0,
@@ -412,14 +437,14 @@ protected:
 
     bool keyPress(const ui::KeyEvent &event) override
     {
-        if (!editing || previews.empty())
+        if (!editing || !v.m_editTarget || previews.empty())
             return false;
         if (event.key == ui::key::Down || event.key == ui::key::Up) {
             const int step = event.key == ui::key::Down ? 1 : -1;
             focusedPreview = size_t(std::clamp(int(focusedPreview) + step, 0, int(previews.size() - 1)));
             const auto r = previews[focusedPreview].rect;
             const auto clip = galleryClip();
-            galleryScroll += r.y < clip.y ? r.y - clip.y : std::max(0.0, r.bottom() + 25 - clip.bottom());
+            galleryScroll += r.y < clip.y ? r.y - clip.y : std::max(0.0, r.bottom() + 39 - clip.bottom());
             galleryScroll = std::clamp(galleryScroll, 0.0, std::max(0.0, galleryHeight - clip.height));
             v.requestLayout();
             requestPaint();
@@ -435,17 +460,82 @@ protected:
 private:
     struct Preview { const controls::Definition *def; Size size; ui::RectF rect; };
 
+    void updateDropTarget()
+    {
+        menuBarDrop = held && v.isMenuBarDrop && v.isMenuBarDrop(mapToWindow(hover));
+        std::optional<base::Point> next;
+        if (held && contains(v.gridClip(), hover)) {
+            const double step = v.cell() + v.gap();
+            const auto span = controls::footprint(held->size);
+            const auto first = v.tileRect(Size::Small, {});
+            next = base::Point(std::clamp(int(std::lround((hover.x - anchor.x - first.x) / step)),
+                                         0, controls::Layout::kColumns - span.width()),
+                               std::clamp(int(std::lround((hover.y - anchor.y - first.y) / step)),
+                                         0, controls::Layout::kRows - span.height()));
+        }
+        if (next == candidate)
+            return;
+        candidate = next;
+        if (proposed || next)
+            v.animateTiles();
+        target.reset();
+        proposed.reset();
+        if (next) {
+            auto page = v.page();
+            if (controls::Layout::place(page, *held, *next)) {
+                proposed = std::move(page);
+                target = next;
+            }
+        }
+    }
+
+    ui::RectF dragRect() const
+    {
+        auto r = v.tileRect(held->size, {});
+        r.x = hover.x - anchor.x;
+        r.y = menuBarDrop ? 2 : hover.y - anchor.y;
+        return r;
+    }
+
+    ui::RectF catalogFooter() const
+    {
+        const auto r = v.catalogRect();
+        const double left = r.x + sidebarWidth() + 21;
+        return {left, std::max(r.y, v.windowHeight(1) - kCatalogFooter), std::max(0., r.right() - left - 22), kCatalogFooter};
+    }
+    ui::RectF doneRect() const
+    {
+        const auto r = catalogFooter();
+        return {r.right() - 70, r.y + 10, 70, 32};
+    }
+    void paintCatalogFooter(ui::Painter &painter)
+    {
+        const auto r = catalogFooter();
+        const auto ink = catalogInk();
+        painter.save();
+        painter.multiplyOpacity(v.editorProgress());
+        painter.clipRoundedRect(v.catalogRect(), 31);
+        painter.fillRect({r.x, r.y, r.width, 1}, ink.withAlpha(.15));
+        paragraph(painter, {r.x, r.y + 11, r.width - 82, 40},
+                  menuBarDrop ? tr("Release to add to the menu bar.")
+                              : tr("Drag a control to place it in Control Center or in the menu bar."), 11, ink.withAlpha(.86));
+        const auto done = doneRect();
+        painter.fillRoundedRect(done, 16, ui::Theme::current().highlight.withAlpha(contains(done, hover) ? 1 : .88));
+        text(painter, done, tr("Done"), 11, kCanvasInk, true, true);
+        painter.restore();
+    }
+
     double sidebarWidth() const { return std::clamp(v.catalogWidth() / 3, 118.0, 321.0); }
     ui::RectF sidebarClip() const
     {
         const auto r = v.catalogRect();
-        return {r.x + 23, r.y + 76, sidebarWidth() - 46, std::max(0.0, v.windowHeight(1) - r.y - 76)};
+        return {r.x + 23, r.y + 76, sidebarWidth() - 46, std::max(0.0, v.windowHeight(1) - r.y - 84)};
     }
     ui::RectF galleryClip() const
     {
         const auto r = v.catalogRect();
         return {r.x + sidebarWidth() + 1, r.y + 12, r.width - sidebarWidth() - 9,
-                std::max(0.0, v.windowHeight(1) - r.y - 12)};
+                std::max(0.0, catalogFooter().y - r.y - 12)};
     }
     ui::RectF iconRect(size_t i) const
     {
@@ -454,7 +544,10 @@ private:
     }
     ui::RectF pageRect(size_t i) const
     {
-        return {v.canvasX() + 9 + 27 * i, v.editRect().y + 5, 23, 23};
+        const auto header = v.editorHeaderRect();
+        const double step = std::min(29., header.width / controls::Layout::kPages);
+        return {header.x + (header.width - step * v.m_model.pages().size()) / 2 + step * i,
+                header.bottom() + 3, step - 4, 19};
     }
     ui::RectF minusRect(const Tile &tile) const
     {
@@ -632,7 +725,7 @@ private:
                 paragraph(*painter, {rect.x + 3, rect.bottom() + 5, rect.width - 6, 39}, label, 10, ink);
             else
                 text(*painter, {rect.x - 4, rect.bottom() + 3, rect.width + 8, 22}, label, 10, ink, false, true);
-            const bool selected = index == focusedPreview && hasFocus();
+            const bool selected = index == focusedPreview && (hasFocus() || search->hasFocus());
             if (selected || (contains(rect, hover) && contains(clip, hover)))
                 sign(*painter, {rect.x - 4, rect.y - 5, 25, 25}, true, kGreen, kCanvasInk);
         };
@@ -744,6 +837,16 @@ private:
         }
         if (painter) {
             painter->restore();
+            const auto scrollThumb = [&](ui::RectF viewport, double scroll, double content) {
+                if (viewport.height <= 0 || content <= viewport.height)
+                    return;
+                const double length = std::min(viewport.height, std::max(23., viewport.height * viewport.height / content));
+                const double y = viewport.y + (viewport.height - length) * scroll / (content - viewport.height);
+                painter->fillRoundedRect({viewport.right() - 4, y, 3, length}, 1.5,
+                                         ink.withAlpha(contains(viewport, hover) ? .34 : .17));
+            };
+            scrollThumb(side, sidebarScroll, sidebarHeight);
+            scrollThumb(clip, galleryScroll, galleryHeight);
             painter->restore();
         } else {
             galleryHeight = y - clip.y + galleryScroll;
@@ -755,6 +858,9 @@ private:
     ui::PointF origin;
     ui::PointF anchor;
     std::optional<base::Point> target;
+    std::optional<base::Point> candidate;
+    std::optional<controls::Page> proposed;
+    bool menuBarDrop = false;
     std::vector<Preview> previews;
     std::vector<std::pair<std::string, ui::RectF>> categories;
     std::vector<render::GlassLens> previewLenses;
@@ -803,7 +909,11 @@ double ControlCenterView::liveGridTop() const
     return kTop + (m_users->users().empty() ? 0 : m_users->sizeHint().height + 9);
 }
 
-double ControlCenterView::gridTop() const { return std::lerp(liveGridTop(), kTop + kEditorHeader, editorProgress()); }
+double ControlCenterView::gridTop() const
+{
+    const double pages = m_model.pages().size() > 1 ? 12 : 0;
+    return std::lerp(liveGridTop(), kTop + kEditorHeader + pages, editorProgress());
+}
 
 int ControlCenterView::rows() const { return std::max(editing() ? 8 : 1, page().rows()); }
 double ControlCenterView::gridHeight() const { return rows() * (cell() + gap()) - gap(); }
@@ -853,20 +963,38 @@ ui::RectF ControlCenterView::editorHeaderRect() const
 
 ui::RectF ControlCenterView::editRect() const
 {
-    const double width = editing() ? 76 : 125;
-    return {canvasX() + (editing() ? canvasWidth() - width - kInset : (canvasWidth() - width) / 2),
-            gridTop() + gridViewport() + 12, width, 25};
+    constexpr double width = 125;
+    return {(canvasWidth() - width) / 2, gridTop() + gridViewport() + 12, width, 25};
 }
 
-void ControlCenterView::rebuild(bool animate)
+void ControlCenterView::animateTiles()
 {
     if (m_transition)
         m_transition->stop();
     m_previous.clear();
-    if (animate)
-        for (const auto &[id, view] : m_tiles)
-            m_previous.emplace(id, view->geometry());
+    m_progress = 1;
+    if (!window())
+        return;
+    for (const auto &[id, view] : m_tiles)
+        m_previous.emplace(id, view->geometry());
+    m_transition = std::make_unique<ui::Animation>(window());
+    m_transition->setDuration(210ms);
+    m_transition->setEasing(ui::Animation::Easing::OutCubic);
+    m_transition->onUpdate = [this](double t) { m_progress = t; requestLayout(); m_chrome->requestPaint(); };
+    m_progress = 0;
+    m_transition->start();
+}
 
+void ControlCenterView::rebuild(bool animate)
+{
+    if (animate) {
+        animateTiles();
+    } else {
+        if (m_transition)
+            m_transition->stop();
+        m_previous.clear();
+        m_progress = 1;
+    }
     std::erase_if(m_tiles, [&](const auto &entry) {
         if (page().tile(entry.first))
             return false;
@@ -932,15 +1060,6 @@ void ControlCenterView::rebuild(bool animate)
         m_tiles.emplace(tile.id, view);
     }
 
-    m_progress = 1;
-    if (animate && window()) {
-        m_transition = std::make_unique<ui::Animation>(window());
-        m_transition->setDuration(240ms);
-        m_transition->setEasing(ui::Animation::Easing::OutCubic);
-        m_transition->onUpdate = [this](double t) { m_progress = t; requestLayout(); m_chrome->requestPaint(); };
-        m_progress = 0;
-        m_transition->start();
-    }
     refresh();
 }
 
@@ -1137,7 +1256,8 @@ void ControlCenterView::layout()
     m_glassTiles.clear();
     for (const auto &tile : page().tiles) {
         auto *view = m_tiles.at(tile.id);
-        auto r = translated(tileRect(tile.size, tile.cell), -clip.x, -clip.y);
+        const auto *proposed = m_chrome->proposed ? m_chrome->proposed->tile(tile.id) : nullptr;
+        auto r = translated(tileRect(tile.size, proposed ? proposed->cell : tile.cell), -clip.x, -clip.y);
         if (m_progress < 1) {
             if (const auto it = m_previous.find(tile.id); it != m_previous.end()) {
                 const auto &from = it->second;
@@ -1198,8 +1318,16 @@ ui::Path ControlCenterView::glassShape() const
     } else if (m_users->isVisible()) {
         mask.addRoundedRect(m_users->geometry(), 18, 18);
     }
-    const auto footer = editRect();
-    mask.addRoundedRect(footer, footer.height / 2, footer.height / 2);
+    if (!editing()) {
+        const auto footer = editRect();
+        mask.addRoundedRect(footer, footer.height / 2, footer.height / 2);
+    }
+    if (m_chrome->dragging && m_chrome->held) {
+        const auto ghost = m_chrome->dragRect();
+        ui::Path path;
+        path.addRoundedRect(ghost, radius(ghost), radius(ghost));
+        mask = mask.united(path);
+    }
     return mask;
 }
 
@@ -1210,9 +1338,14 @@ std::vector<render::GlassLens> ControlCenterView::glassLenses() const
         pieces.push_back({ui::toBase(r), corners, tint, opacity});
     };
     const auto clip = ui::toBase(gridClip());
-    for (const auto &tile : m_glassTiles)
-        if (clip.intersects(ui::toBase(tile)))
+    for (const auto &tile : m_glassTiles) {
+        if (!clip.intersects(ui::toBase(tile)))
+            continue;
+        if (m_chrome->dragging)
+            pieces.push_back({ui::toBase(tile), radius(tile), -1, 1, clip});
+        else
             add(tile, radius(tile));
+    }
     if (m_removed && m_removal < 1) {
         const auto r = removingRect();
         add(r, radius(r), -1, float(1 - m_removal));
@@ -1225,8 +1358,14 @@ std::vector<render::GlassLens> ControlCenterView::glassLenses() const
     } else if (m_users->isVisible()) {
         add(m_users->geometry(), 18);
     }
-    const auto footer = editRect();
-    add(footer, footer.height / 2);
+    if (!editing()) {
+        const auto footer = editRect();
+        add(footer, footer.height / 2);
+    }
+    if (m_chrome->dragging && m_chrome->held) {
+        const auto ghost = m_chrome->dragRect();
+        pieces.push_back({ui::toBase(ghost), radius(ghost), -1, 1, ui::toBase(localRect())});
+    }
     return pieces;
 }
 

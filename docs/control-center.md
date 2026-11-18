@@ -14,8 +14,12 @@ The live grid uses a 342 logical pixel canvas. It glides next to the
 catalog and back without extending its soft backdrop down to the dock. The
 icon strip, empty cells and remove badges animate in and out with the editor.
 Closing the panel fades the content and the glass together.
-Click a preview or drag it into the grid to add it. Drag an existing control to
-move it; Escape cancels the drag. Left click runs a live control's primary
+Click a preview or drag it into the grid to add it. While dragging, the grid
+previews how nearby tiles will move without saving until you drop. Escape
+restores the original arrangement. Drag a preview or an existing tile onto
+the status side of the menu bar to pin it without removing it from the grid.
+The catalog footer stays in place as you scroll, with a **Done** button.
+Left click runs a live control's primary
 action; right click opens its detail page where available.
 Use its minus button to remove it with a shrink/fade or its context menu to resize it and manage
 its menu-bar presence. Only supported sizes are selectable. The plus in the

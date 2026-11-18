@@ -80,6 +80,7 @@ public:
     std::function<void()> onSoundDetail;
     std::function<State(std::string_view)> state;
     std::function<void(std::string_view, bool detail)> activate;
+    std::function<bool(ui::PointF)> isMenuBarDrop;
     std::function<void()> onModelChanged;
     std::function<void()> onGlassChanged;
     // The layout's height may have changed.
@@ -94,6 +95,7 @@ private:
     friend class Chrome;
     void rebuild(bool animate = false);
     void changed(bool animate = true);
+    void animateTiles();
     const controls::Page &page() const;
     double cell() const;
     double gap() const;

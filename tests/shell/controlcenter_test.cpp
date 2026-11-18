@@ -455,6 +455,24 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     capture("-editor-exit-mid");
     test::runFor(std::chrono::milliseconds(180));
     capture("-editor-exit-end");
+    click(center->popupWindow(Panel::ControlCenter)->drawnBounds().center().x(),
+          center->popupWindow(Panel::ControlCenter)->drawnBounds().bottom() - 24);
+    capture("-warmup");
+    test::runFor(std::chrono::milliseconds(390));
+    capture("-warmup");
+    const auto wifi = centre(Panel::ControlCenter, center->controlCenterView()->wirelessCard());
+    const auto bluetooth = centre(Panel::ControlCenter, center->controlCenterView()->bluetoothCard());
+    press(wifi.x(), wifi.y());
+    move(bluetooth.x() + 12, bluetooth.y() + 6);
+    capture("-warmup");
+    test::runFor(std::chrono::milliseconds(230));
+    capture("-editor-drag");
+    key(KEY_ESC);
+    release();
+    center->controlCenterView()->addPage();
+    capture("-warmup");
+    test::runFor(std::chrono::milliseconds(260));
+    capture("-editor-empty");
     center->closePanels();
     test::runFor(std::chrono::milliseconds(25));
     capture("-widgets");
@@ -1173,7 +1191,7 @@ TEST_F(ControlCenterTest, ControlCatalogRisesOverTheDockAndReachesTheScreenEdge)
     EXPECT_EQ(1, settledHeader.opacity);
     EXPECT_EQ(liveUnderlay.height(), getUnderlay().height());
     EXPECT_GT(getUnderlay().x(), liveUnderlay.x());
-    EXPECT_TRUE(std::ranges::any_of(lenses, [](const auto &lens) { return lens.viewport.has_value(); }));
+    EXPECT_TRUE(std::ranges::any_of(lenses, [](const auto &lens) { return lens.viewport && lens.viewport->x() < 350; }));
     EXPECT_TRUE(mask.contains({30, 80}));
     EXPECT_TRUE(mask.contains({1, double(expanded.height() - 2)})); // no bottom corner above the dock
     const auto overlap = expanded.intersected(testDock.geometry());
@@ -1193,6 +1211,86 @@ TEST_F(ControlCenterTest, ControlCatalogRisesOverTheDockAndReachesTheScreenEdge)
     EXPECT_EQ(liveUnderlay, getUnderlay());
     EXPECT_EQ(live.bottom(), window->drawnBounds().bottom());
     EXPECT_LT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
+}
+
+TEST_F(ControlCenterTest, EditorPreviewsCollisionsWithoutSavingAndPinsViaTheBar)
+{
+    using namespace shell::controls;
+    center->openPanel(Panel::ControlCenter, bar.get(), item(178));
+    frames(std::chrono::milliseconds(300));
+    auto *window = center->popupWindow(Panel::ControlCenter);
+    const auto live = window->drawnBounds();
+    click(live.center().x(), live.bottom() - 24);
+    frames(std::chrono::milliseconds(390));
+    auto *view = center->controlCenterView();
+    ASSERT_TRUE(view->editing());
+    const auto wifi = centre(Panel::ControlCenter, view->wirelessCard());
+    const auto bluetooth = centre(Panel::ControlCenter, view->bluetoothCard());
+    const auto &model = center->layoutModel();
+    const auto checkPosition = [&](std::string_view name) {
+        const auto &tiles = model.page(0)->tiles;
+        return std::ranges::find_if(tiles, [name](const auto &tile) { return tile.type == name; })->cell;
+    };
+    press(wifi.x(), wifi.y());
+    move(bluetooth.x(), bluetooth.y());
+    frames(std::chrono::milliseconds(240));
+    EXPECT_FALSE(view->wirelessCard()->isVisible());
+    EXPECT_LT(centre(Panel::ControlCenter, view->bluetoothCard()).y(), bluetooth.y() - 10);
+    EXPECT_EQ(base::Point(0, 0), checkPosition("wifi"));
+    EXPECT_EQ(base::Point(0, 1), checkPosition("bluetooth"));
+    key(KEY_ESC);
+    release();
+    frames(std::chrono::milliseconds(240));
+    EXPECT_TRUE(view->wirelessCard()->isVisible());
+    EXPECT_EQ(bluetooth, centre(Panel::ControlCenter, view->bluetoothCard()));
+
+    press(wifi.x(), wifi.y());
+    move(wifi.x(), 15);
+    release();
+    frames(std::chrono::milliseconds(240));
+    EXPECT_EQ(Pin::Always, model.pin("wifi"));
+    EXPECT_EQ(base::Point(0, 0), checkPosition("wifi"));
+    ASSERT_TRUE(view->editing());
+    const auto expanded = window->drawnBounds();
+    const auto sheet = std::ranges::find_if(window->surface()->glass().lenses, [](const auto &lens) {
+        return !lens.viewport && lens.bounds.x() == 0 && lens.radius == 31;
+    });
+    ASSERT_NE(window->surface()->glass().lenses.end(), sheet);
+    click(expanded.x() + sheet->bounds.right() - 55, expanded.bottom() - 28);
+    frames(std::chrono::milliseconds(310));
+    EXPECT_FALSE(view->editing());
+}
+
+TEST_F(ControlCenterTest, EditorSearchCanAddFromTheKeyboard)
+{
+    center->openPanel(Panel::ControlCenter, bar.get(), item(178));
+    frames(std::chrono::milliseconds(300));
+    auto *window = center->popupWindow(Panel::ControlCenter);
+    const auto live = window->drawnBounds();
+    click(live.center().x(), live.bottom() - 24);
+    frames(std::chrono::milliseconds(390));
+    auto *view = center->controlCenterView();
+    ASSERT_TRUE(view->editing());
+    view->addPage();
+    frames(std::chrono::milliseconds(270));
+    const int page = view->pageId();
+    const auto expanded = window->drawnBounds();
+    auto *search = dynamic_cast<ui::SearchField *>(view->children().back()->children().front().get());
+    ASSERT_NE(nullptr, search);
+    const auto field = search->mapToWindow({35, 17});
+    click(expanded.x() + field.x, expanded.y() + field.y);
+    ASSERT_TRUE(search->hasFocus());
+    search->setText("not a category or control");
+    frame();
+    key(KEY_ENTER);
+    EXPECT_TRUE(center->layoutModel().page(page)->tiles.empty());
+    search->setText("CONNECTIVITY");
+    frame();
+    key(KEY_DOWN);
+    key(KEY_ENTER);
+    const auto &tiles = center->layoutModel().page(page)->tiles;
+    ASSERT_EQ(1u, tiles.size());
+    EXPECT_EQ("bluetooth", tiles.front().type);
 }
 
 TEST_F(ControlCenterTest, WidgetsCanBeAddedDraggedAndRemovedAndSurviveRestart)
