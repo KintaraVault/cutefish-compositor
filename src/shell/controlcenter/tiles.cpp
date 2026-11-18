@@ -238,7 +238,7 @@ ui::RectF CardItem::plateRect() const
     const double padding = ui::Theme::current().largeSpacing;
     if (m_controlStyle) {
         const double row = m_large ? geometry().height / 2 : geometry().height;
-        const double size = std::clamp(row / 56., 1., 1.3) * (m_small ? 23 : 33);
+        const double size = std::clamp(row / 56., 1., 1.3) * (m_small ? 25 : 34);
         return {m_small ? (geometry().width - size) / 2 : 10,
                 m_small || !m_large ? (geometry().height - size) / 2 : 10, size, size};
     }
@@ -278,7 +278,7 @@ void CardItem::layout()
     const double height = geometry().height;
     const double scale = std::clamp((m_large ? height / 2 : height) / 56., 1., 1.3);
     const ui::RectF slot = plateRect();
-    const double size = m_controlStyle ? scale * (m_small ? 19 : 20) : kIconSize;
+    const double size = m_controlStyle ? scale * (m_small ? 23 : 20) : kIconSize;
     const ui::RectF icon {slot.x + (slot.width - size) / 2, slot.y + (slot.height - size) / 2, size, size};
     m_svg->setGeometry(icon);
     m_glyph->setSize(size);
@@ -677,6 +677,12 @@ void MediaTile::paint(ui::Painter &painter)
     painter.fillRoundedRect(art, m_controlStyle ? 11 : ui::Theme::current().smallRadius,
                             m_controlStyle ? kWhite.withAlpha(.12) : panel::on(surface, panel::isDark(surface) ? 0.15 : 0.1),
                             ui::Corners::Continuous);
+    if (!m_artReady && !m_artLoading && m_controlStyle) {
+        const double size = art.width * .42;
+        painter.drawSvg(panel::artwork("media-playback-start-symbolic", true),
+                        {art.x + (art.width - size) / 2, art.y + (art.height - size) / 2, size, size},
+                        kWhite.withAlpha(.66));
+    }
     if (m_artLoading && m_controlStyle) {
         const ui::PointF c {art.x + art.width / 2, art.y + art.height / 2};
         for (int i = 0; i < 12; ++i) {

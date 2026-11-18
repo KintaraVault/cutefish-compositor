@@ -14,6 +14,7 @@
 #include "core/preferences.h"
 #include "shell/controlcenter/control_center.h"
 #include "shell/controlcenter/control_paint.h"
+#include "shell/controlcenter/editor_palette.h"
 #include "shell/controlcenter/panel_style.h"
 #include "shell/shell_data.h"
 #include "shell/shell_window.h"
@@ -38,9 +39,7 @@ constexpr int kRadius = 34;
 constexpr base::Point kOrigin {112, 88};
 constexpr size_t kMaximumWidgets = 18;
 
-ui::Color accent() { return ui::Theme::current().highlight; }
 ui::Color ink(double alpha = 1) { return ui::Color::rgb(0xffffff).withAlpha(alpha); }
-ui::Color galleryInk(double alpha = 1) { return panel::dark() ? ink(alpha) : ui::Color::rgb(0x171622).withAlpha(alpha); }
 
 render::GlassParams widgetGlass()
 {
@@ -331,26 +330,25 @@ protected:
 
     void layout() override
     {
-        m_search->setFill(ui::ColorRecipe(panel::dark() ? ink(.14) : ink(.82)));
-        m_search->setGlyphColor(ui::ColorRecipe(galleryInk(.80)));
-        m_search->setTextColor(ui::ColorRecipe(galleryInk()));
-        m_search->setPlaceholderColor(ui::ColorRecipe(galleryInk(.76)));
-        m_search->setGeometry({24, 23, sidebar() - 48, 36});
+        const auto palette = editor_palette::forTheme(panel::dark());
+        m_search->setFill(ui::ColorRecipe(palette.surface.withAlpha(.76)));
+        m_search->setGlyphColor(ui::ColorRecipe(palette.muted));
+        m_search->setTextColor(ui::ColorRecipe(palette.ink));
+        m_search->setPlaceholderColor(ui::ColorRecipe(palette.muted));
+        m_search->setGeometry({20, 20, sidebar() - 40, 32});
     }
 
     void paint(ui::Painter &painter) override
     {
         const auto width = geometry().width;
-        const auto ink = [](double alpha = 1.) { return galleryInk(alpha); };
+        const auto palette = editor_palette::forTheme(panel::dark());
+        const auto ink = [&](double alpha = 1.) { return palette.ink.withAlpha(alpha); };
         const auto height = geometry().height;
         const auto side = sidebar();
         painter.save();
         painter.clipRoundedRect(localRect(), kRadius);
-        painter.fillRect({0, 0, side, height}, ink(.055));
-        painter.fillRect({side, 0, 1, height}, ink(.17));
-        const auto r = doneRect();
-        painter.fillRoundedRect(r, r.height / 2, accent().withAlpha(contains(r, m_hover) ? 1 : .85));
-        text(painter, r, tr("Done"), 11, ui::Color::rgb(0xffffff), true, true);
+        painter.fillRect({0, 0, side, height}, palette.surface.withAlpha(.14));
+        painter.fillRect({side, 0, 1, height - 60}, palette.border.withAlpha(.20));
         const auto kinds = filtered();
         auto all = kindRect(0);
         if (m_all || contains(all, m_hover))
@@ -365,8 +363,7 @@ protected:
             if (selected || contains(row, m_hover))
                 painter.fillRoundedRect(row, 10, ink(selected ? .20 : .09));
             const ui::RectF badge {row.x + 11, row.y + 8, 29, 29};
-            static constexpr std::array colors {0x282931, 0xc64a55, 0x37a569};
-            painter.fillRoundedRect(badge, 7, ui::Color::rgb(colors[int(kind)]));
+            painter.fillRoundedRect(badge, 6, palette.raised.withAlpha(.65));
             const auto c = center(badge);
             if (kind == Kind::Clock) {
                 painter.strokeRoundedRect(inset(badge, 6), 9, ink(), 1.3);
@@ -382,36 +379,57 @@ protected:
             }
             text(painter, {row.x + 49, row.y, row.width - 55, row.height}, title(kind), 11, ink(), selected);
         }
-        text(painter, {side + 30, 16, width - side - 142, 44},
-             m_all ? tr("All Widgets") : title(m_kind), 17, ink(), true);
+        if (!featured())
+            text(painter, {side + 26, 16, width - side - 52, 35},
+                 !m_search->text().empty() ? tr("Search Results") : m_all ? tr("All Widgets") : title(m_kind), 14, ink(), true);
         const auto clip = previewClip();
         painter.save();
         painter.clip(clip);
         if (kinds.empty())
             text(painter, clip, tr("No Widgets Found"), 16, ink(.78), true, true);
+        if (featured()) {
+            const ui::RectF hero {clip.x + 6, 22 - m_scroll, clip.width - 12, 151};
+            painter.fillRoundedRect(hero, 10, ink(.11));
+            text(painter, {hero.x + 20, hero.y + 22, hero.width * .54, 30}, tr("Widgets on the Desktop"), 15, palette.ink, true);
+            paragraph(painter, {hero.x + 20, hero.y + 60, hero.width * .48, 78},
+                      tr("Keep useful information in view. Drag a widget from the gallery onto your desktop."), 12, palette.muted);
+            const ui::RectF picture {hero.x + hero.width * .57, hero.y + 16, hero.width * .39, 119};
+            painter.fillRoundedRect(picture, 8, palette.raised.withAlpha(.58));
+            const double unit = (picture.width - 25) / 4;
+            for (int i = 0; i < 4; ++i)
+                painter.fillRoundedRect({picture.x + 8 + i * unit, picture.y + 8, unit * .55, 3}, 1.5, ink(.33));
+            const double card = std::min(35., unit);
+            painter.fillRoundedRect({picture.x + 13, picture.y + 24, card, card}, 8, ink(.30));
+            painter.fillRoundedRect({picture.x + card + 20, picture.y + 24, card * 2 + 6, card}, 8, ink(.23));
+            painter.fillRoundedRect({picture.x + card * .6, picture.y + 64, picture.width * .77, 47}, 7, palette.surface.withAlpha(.91));
+            for (int i = 0; i < 3; ++i)
+                painter.fillRoundedRect({picture.x + card * .6 + 9 + i * unit, picture.y + 73, unit - 4, 25}, 5, ink(.19));
+            text(painter, {clip.x + 10, hero.bottom() + 8, clip.width - 20, 30}, tr("Recommendations"), 12, palette.muted, true);
+        }
         int group = 0;
         for (const Kind kind : shownKinds()) {
             const auto small = previewRect(group, 0);
-            if (m_all)
+            if (m_all && !featured())
                 text(painter, {clip.x + 12, small.y - 34, clip.width - 24, 29}, title(kind), 13, ink(), true);
             for (int i = 0; i < 2; ++i) {
                 auto rect = previewRect(group, i);
                 drawPreview(painter, rect, kind, i);
-                text(painter, {rect.x, rect.bottom() + 4, rect.width, 29}, i ? tr("Medium") : tr("Small"), 10, ink(.79), false, true);
+                const auto label = featured() ? std::string(title(kind))
+                                             : std::string(i ? tr("Medium") : tr("Small"));
+                text(painter, {rect.x, rect.bottom() + 4, rect.width, 29}, label, 10, palette.muted, false, true);
                 if (contains(rect, m_hover) && contains(clip, m_hover))
-                    sign(painter, {rect.x + 5, rect.y + 5, 24, 24}, true, ui::Color::rgb(0x32994E), ink());
+                    sign(painter, {rect.x + 5, rect.y + 5, 24, 24}, true, ui::Color::rgb(0x32994E), ui::Color::rgb(0xffffff));
             }
             ++group;
         }
         painter.restore();
-        const double content = contentHeight();
-        if (content > clip.height) {
-            const double thumb = std::max(21., clip.height * clip.height / content);
-            const double offset = m_scroll / (content - clip.height) * (clip.height - thumb);
-            painter.fillRoundedRect({clip.right() - 3, clip.y + offset, 3, thumb}, 1.5, ink(.28));
-        }
-        text(painter, {side + 16, height - 35, width - side - 32, 27},
-             tr("Click a widget to add it, or drag it onto the desktop."), 9.5, ink(.71), false, true);
+        painter.fillRect({0, height - 60, width, 60}, palette.surface.withAlpha(.30));
+        painter.fillRect({0, height - 60, width, 1}, palette.border.withAlpha(.21));
+        text(painter, {23, height - 56, width - 156, 52},
+             tr("Click a widget to add it, or drag it onto the desktop."), 11, palette.ink, true);
+        const auto r = doneRect();
+        painter.fillRoundedRect(r, 10, palette.accent.withAlpha(contains(r, m_hover) ? 1 : .91));
+        text(painter, r, tr("Done"), 11, palette.accentInk, true, true);
         painter.restore();
     }
 
@@ -556,23 +574,45 @@ private:
         m_drag = false;
         requestPaint();
     }
-    double sidebar() const { return std::clamp(geometry().width * .27, 142., 270.); }
-    ui::RectF doneRect() const { return {geometry().width - 98, 22, 76, 34}; }
-    ui::RectF kindRect(int kind) const { return {17, 70. + 46 * kind, sidebar() - 34, 45}; }
-    ui::RectF previewClip() const { return {sidebar() + 17, 66, geometry().width - sidebar() - 34, geometry().height - 104}; }
+    double sidebar() const { return std::clamp(geometry().width * .24, 132., 240.); }
+    bool featured() const { return m_all && m_search->text().empty() && geometry().width >= 640 && geometry().height >= 400; }
+    ui::RectF doneRect() const { return {geometry().width - 116, geometry().height - 45, 96, 30}; }
+    ui::RectF kindRect(int kind) const { return {14, 64. + 42 * kind, sidebar() - 28, 40}; }
+    ui::RectF previewClip() const
+    {
+        const double top = featured() ? 16 : 61;
+        return {sidebar() + 17, top, geometry().width - sidebar() - 34, std::max(0., geometry().height - top - 66)};
+    }
     double previewSize() const { return std::max(25., std::min(214., (previewClip().width - 40) / 3.1)); }
     double groupPitch() const { return previewSize() + 93; }
     double contentHeight() const
     {
         const auto count = shownKinds().size();
-        return count ? count * groupPitch() - 19. : 0.;
+        double bottom = previewClip().y;
+        for (size_t i = 0; i < count; ++i)
+            for (int wide : {0, 1})
+                bottom = std::max(bottom, previewRect(int(i), wide).bottom() + m_scroll + 36.);
+        return bottom - previewClip().y;
     }
     ui::RectF previewRect(int group, int wide) const
     {
+        if (featured()) {
+            // A compact mixed-size spread rather than three identical rows.
+            const auto clip = previewClip();
+            const double size = std::clamp((clip.width - 64) / 4., 100., 156.);
+            const double gap = size * kGap / kSize;
+            const double x = clip.x + (clip.width - (4 * size + 3 * gap)) / 2;
+            const double step = size + gap;
+            static constexpr int columns[3][2] = {{0, 0}, {1, 2}, {3, 1}};
+            static constexpr int rows[3][2] = {{0, 1}, {0, 0}, {1, 2}};
+            return {x + step * columns[group][wide], 218 + rows[group][wide] * (size + 37) - m_scroll,
+                    wide ? size * 2 + gap : size, size};
+        }
         const double size = previewSize();
         const double gap = size * kGap / kSize;
         const double x = previewClip().x + (previewClip().width - size * 3 - gap * 2) / 2;
-        return {x + (wide ? size + gap : 0), 106 + groupPitch() * group - m_scroll, wide ? size * 2 + gap : size, size};
+        return {x + (wide ? size + gap : 0), 103 + groupPitch() * group - m_scroll,
+                wide ? size * 2 + gap : size, size};
     }
     std::vector<Kind> filtered() const
     {
@@ -597,7 +637,9 @@ private:
     void drawPreview(ui::Painter &painter, ui::RectF rect, Kind kind, bool wide) const
     {
         const double radius = rect.height * kRadius / kSize;
-        painter.fillRoundedRect(rect, radius, ui::LinearGradient::vertical(rect, ink(.16), ink(.045)));
+        const auto fill = panel::dark() ? ink(.17) : ui::Color::rgb(0x111111).withAlpha(.53);
+        const auto shade = panel::dark() ? ink(.08) : ui::Color::rgb(0x111111).withAlpha(.69);
+        painter.fillRoundedRect(rect, radius, ui::LinearGradient::vertical(rect, fill, shade));
         Card::artwork(painter, rect, kind, wide, m_owner.m_controls.batteryCharge(), m_owner.m_controls.onBattery());
     }
     void scheduleDone()
@@ -695,8 +737,8 @@ void DesktopWidgets::updateOutput()
     }
     if (m_gallery) {
         const auto screen = output->bounds;
-        const int w = std::min(1060, screen.width() - 24);
-        const int h = std::min(420, screen.height() - 24);
+        const int w = std::min(1028, screen.width() - 24);
+        const int h = std::min(552, screen.height() - 48);
         m_gallery->setOutput(output->name);
         m_galleryView->setRestingGeometry({screen.x() + (screen.width() - w) / 2, screen.bottom() - h - 8, w, h});
         const bool dark = panel::dark();
@@ -705,6 +747,8 @@ void DesktopWidgets::updateOutput()
         galleryGlass.tintAlpha = dark ? .72f : .53f;
         galleryGlass.shadowLift = 0;
         galleryGlass.highlightRollOff = 0;
+        galleryGlass.lenses = {{{0, 0, double(w), double(h)}, kRadius, -1, 1, std::nullopt,
+                                dark ? render::GlassFinish::GalleryDark : render::GlassFinish::GalleryLight}};
         ui::Path shape;
         shape.addRoundedRect({0, 0, double(w), double(h)}, kRadius, kRadius);
         m_gallery->setBackgroundBlur({0, 0, w, h}, kRadius, galleryGlass, shape);

@@ -195,15 +195,22 @@ TEST_P(ShellGpuPixels, GlassUnderlaySoftensGapsWithoutPaintingASolidPlate)
 TEST_P(ShellGpuPixels, FrostedSheetDiffusesTheSceneWithoutChangingNearbyLenses)
 {
     class CatalogBackdrop : public ui::View {
+    public:
+        void setColor(bool color) { m_color = color; requestPaint(); }
+    private:
         void paint(ui::Painter &painter) override
         {
             painter.fillRect(localRect(), ui::Color::rgb(0x272727));
-            painter.fillRect({200, 0, 200, 200}, ui::Color::rgb(0x164fa5));
+            if (m_color)
+                painter.fillRect({200, 0, 200, 200}, ui::Color::rgb(0x164fa5));
             painter.fillRect({0, 148, 400, 35}, ui::Color::rgb(0xffffff));
         }
+        bool m_color = true;
     };
     shell::ShellWindow wallpaper(shell.get(), wm::WindowRole::Desktop, false);
-    wallpaper.setContentView(std::make_unique<CatalogBackdrop>());
+    auto backdrop = std::make_unique<CatalogBackdrop>();
+    auto *background = backdrop.get();
+    wallpaper.setContentView(std::move(backdrop));
     wallpaper.setGeometry(kOutput);
     wallpaper.show();
 
@@ -228,16 +235,27 @@ TEST_P(ShellGpuPixels, FrostedSheetDiffusesTheSceneWithoutChangingNearbyLenses)
     const auto light = draw();
     material.lenses.front().finish = GlassFinish::FrostedDark;
     const auto dark = draw();
+    material.lenses.front().finish = GlassFinish::GalleryLight;
+    const auto gallery = draw();
+    background->setColor(false);
+    const auto grayGallery = draw();
+    material.lenses.front().finish = GlassFinish::FrostedLight;
+    const auto grayLight = draw();
 
     EXPECT_EQ(pixelAt(standard, {344, 56}), pixelAt(light, {344, 56}));
     EXPECT_EQ(pixelAt(standard, {344, 56}), pixelAt(dark, {344, 56}));
     EXPECT_EQ(pixelAt(standard, {303, 56}), pixelAt(light, {303, 56}));
     EXPECT_EQ(0xff272727u, pixelAt(light, {20, 14})); // the mask, not a rectangular quad
     const auto gray = [](uint32_t color) { return int(color & 255); };
-    const auto neutral = pixelAt(light, {66, 66});
+    const auto neutral = pixelAt(grayLight, {66, 66});
     EXPECT_EQ(gray(neutral), int((neutral >> 8) & 255));
     EXPECT_EQ(gray(neutral), int((neutral >> 16) & 255));
     EXPECT_GT(gray(neutral), 135);
+    EXPECT_NE(pixelAt(light, {66, 66}), neutral); // colour is picked up across the sheet
+    EXPECT_GT(gray(pixelAt(gallery, {66, 66})), gray(pixelAt(light, {66, 66})));
+    const auto neutralGallery = pixelAt(grayGallery, {66, 66});
+    EXPECT_EQ(gray(neutralGallery), int((neutralGallery >> 8) & 255));
+    EXPECT_EQ(gray(neutralGallery), int((neutralGallery >> 16) & 255));
     EXPECT_LT(gray(pixelAt(dark, {66, 66})), 65);
     for (const auto *image : {&light, &dark}) {
         const auto blue = pixelAt(*image, {263, 64});

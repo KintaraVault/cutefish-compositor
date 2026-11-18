@@ -1378,6 +1378,8 @@ TEST_F(ControlCenterTest, WidgetGalleryRisesFromTheScreenEdgeAndSearches)
     EXPECT_EQ(kOutput.bottom() - 8, bounds.bottom());
     EXPECT_GT(bounds.bottom(), kOutput.bottom() - kDock);
     EXPECT_GT(wm::layerFor(gallery->wmWindow()), wm::StackingLayer::Dock);
+    ASSERT_EQ(1u, gallery->surface()->glass().lenses.size());
+    EXPECT_EQ(render::GlassFinish::GalleryLight, gallery->surface()->glass().lenses.front().finish);
     search->setText("does not exist");
     key(KEY_ENTER);
     const auto countWidgets = [&] {
@@ -1398,6 +1400,13 @@ TEST_F(ControlCenterTest, WidgetGalleryRisesFromTheScreenEdgeAndSearches)
     frames(std::chrono::milliseconds(60));
     EXPECT_EQ(5, countWidgets());
     key(KEY_ESC);
+    test::runFor(std::chrono::milliseconds(15));
+    EXPECT_EQ(nullptr, locate());
+    widgets.edit();
+    frames(std::chrono::milliseconds(390));
+    ASSERT_NE(nullptr, locate());
+    const auto reopened = locate()->geometry();
+    click(reopened.right() - 68, reopened.bottom() - 30);
     test::runFor(std::chrono::milliseconds(15));
     EXPECT_EQ(nullptr, locate());
 }

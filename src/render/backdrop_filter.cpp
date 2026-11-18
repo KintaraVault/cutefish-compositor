@@ -659,7 +659,9 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
                     std::clamp(r, 0., std::min(body.width(), body.height()) / 2));
         if (glass.enabled) {
             glUniform1f(program.uniform("uNestedLens"), nested ? 1.f : 0.f);
-            glUniform1f(program.uniform("uFrosted"), finish == GlassFinish::FrostedDark ? -1.f
+            glUniform1f(program.uniform("uFrosted"), finish == GlassFinish::GalleryDark ? -2.f
+                        : finish == GlassFinish::GalleryLight ? 2.f
+                        : finish == GlassFinish::FrostedDark ? -1.f
                         : finish == GlassFinish::FrostedLight ? 1.f : 0.f);
             glUniform1f(program.uniform("uOpacity"), std::clamp(glass.opacity * opacity, 0.0f, 1.0f));
             glUniform4f(program.uniform("uLens"), body.x() - quad.x(), body.y() - quad.y(),

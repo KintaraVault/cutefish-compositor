@@ -6,6 +6,7 @@
 
 #include "base/i18n.h"
 #include "shell/controlcenter/control_paint.h"
+#include "shell/controlcenter/editor_palette.h"
 #include "shell/controlcenter/level_slider.h"
 #include "shell/controlcenter/panel_style.h"
 #include "shell/controlcenter/tiles.h"
@@ -34,7 +35,7 @@ constexpr double kCatalogFooter = 54;
 constexpr ui::Color kGreen {42, 157, 75, 255};
 constexpr auto kCanvasInk = ui::Color::rgb(0xffffff);
 constexpr auto kCatalogInk = ui::Color::rgb(0x171622);
-ui::Color catalogInk() { return panel::dark() ? kCanvasInk : kCatalogInk; }
+ui::Color catalogInk() { return editor_palette::forTheme(panel::dark()).ink; }
 
 double radius(const ui::RectF &r)
 {
@@ -89,7 +90,9 @@ void preview(ui::Painter &painter, const controls::Definition &def, Size size, c
     if (solid)
         painter.fillRoundedRect(r, radius(r), ink.withAlpha(.85));
     if (def.id == "media" && size == Size::Large) {
-        painter.fillRoundedRect({r.x + 12, r.y + 12, 36, 36}, 8, panel::textColor(.13));
+        const ui::RectF cover {r.x + 12, r.y + 12, 40, 40};
+        painter.fillRoundedRect(cover, 11, ink.withAlpha(.18));
+        painter.drawSvg(panel::artwork("media-playback-start-symbolic", true), centered(cover, 19), ink.withAlpha(.66));
         text(painter, {r.x + 15, r.bottom() - 83, r.width - 30, 25},
              media.hasPlayer && !media.title.empty() ? media.title : tr("Not Playing"), 11, ink, true);
         static constexpr std::array buttons {"media-skip-backward-symbolic", "media-playback-start-symbolic", "media-skip-forward-symbolic"};
@@ -198,10 +201,11 @@ protected:
         const auto r = v.catalogRect();
         search->setVisible(editing);
         if (editing) {
-            search->setFill(ui::ColorRecipe(panel::dark() ? kCanvasInk.withAlpha(.14) : kCanvasInk));
-            search->setGlyphColor(ui::ColorRecipe(catalogInk()));
+            const auto palette = editor_palette::forTheme(panel::dark());
+            search->setFill(ui::ColorRecipe(palette.surface.withAlpha(.76)));
+            search->setGlyphColor(ui::ColorRecipe(palette.muted));
             search->setTextColor(ui::ColorRecipe(catalogInk()));
-            search->setPlaceholderColor(ui::ColorRecipe(catalogInk().withAlpha(.74)));
+            search->setPlaceholderColor(ui::ColorRecipe(palette.muted));
             search->setGeometry({r.x + 26, r.y + 26, sidebarWidth() - 52, 37});
             search->setOpacity(v.m_catalogReveal);
         }
@@ -511,17 +515,17 @@ private:
     void paintCatalogFooter(ui::Painter &painter)
     {
         const auto r = catalogFooter();
-        const auto ink = catalogInk();
+        const auto palette = editor_palette::forTheme(panel::dark());
         painter.save();
         painter.multiplyOpacity(v.editorProgress());
         painter.clipRoundedRect(v.catalogRect(), 31);
-        painter.fillRect({r.x, r.y, r.width, 1}, ink.withAlpha(.15));
+        painter.fillRect({r.x, r.y, r.width, 1}, palette.border.withAlpha(.25));
         paragraph(painter, {r.x, r.y + 11, r.width - 82, 40},
                   menuBarDrop ? tr("Release to add to the menu bar.")
-                              : tr("Drag a control to place it in Control Center or in the menu bar."), 11, ink.withAlpha(.86));
+                              : tr("Drag a control to place it in Control Center or in the menu bar."), 11, palette.ink.withAlpha(.86));
         const auto done = doneRect();
-        painter.fillRoundedRect(done, 16, ui::Theme::current().highlight.withAlpha(contains(done, hover) ? 1 : .88));
-        text(painter, done, tr("Done"), 11, kCanvasInk, true, true);
+        painter.fillRoundedRect(done, 11, palette.accent.withAlpha(contains(done, hover) ? 1 : .91));
+        text(painter, done, tr("Done"), 11, palette.accentInk, true, true);
         painter.restore();
     }
 
@@ -634,14 +638,15 @@ private:
     void visitGallery(ui::Painter *painter)
     {
         const auto r = v.catalogRect();
-        const auto ink = catalogInk();
-        const auto soft = ink.withAlpha(.80);
+        const auto palette = editor_palette::forTheme(panel::dark());
+        const auto ink = palette.ink;
+        const auto soft = palette.muted;
         if (painter) {
             painter->save();
             painter->multiplyOpacity(v.m_catalogReveal);
             painter->clipRoundedRect(r, 31);
-            painter->fillRect({r.x, r.y, sidebarWidth(), r.height}, kCanvasInk.withAlpha(.045));
-            painter->fillRect({r.x + sidebarWidth(), r.y, 1, r.height}, ink.withAlpha(.16));
+            painter->fillRect({r.x, r.y, sidebarWidth(), r.height}, palette.surface.withAlpha(.14));
+            painter->fillRect({r.x + sidebarWidth(), r.y, 1, r.height}, palette.border.withAlpha(.20));
         } else {
             categories.clear();
             previews.clear();
@@ -654,9 +659,9 @@ private:
             painter->clip(side);
         }
         double y = side.y - sidebarScroll;
-        const auto categoryRow = [&](const std::string &name, size_t index) {
-            const ui::RectF row {side.x + 3, y, side.width - 6, 60};
-            y += 60;
+        const auto categoryRow = [&](const std::string &name) {
+            const ui::RectF row {side.x + 3, y, side.width - 6, 47};
+            y += 47;
             if (!painter) {
                 categories.emplace_back(name, row);
                 return;
@@ -666,25 +671,24 @@ private:
             const bool selected = search->text().empty() && name == category;
             if (selected || (contains(row, hover) && contains(side, hover)))
                 painter->fillRoundedRect(row, 12, ink.withAlpha(selected ? .19 : .08));
-            static const int colors[] = {0x1685F7, 0x7657ED, 0xE75362, 0xF49E22, 0x57AF70, 0x6473ED};
-            const ui::RectF badge {row.x + 13, row.y + 13, 34, 34};
+            const ui::RectF badge {row.x + 11, row.y + 10, 27, 27};
+            painter->fillRoundedRect(badge, 6, palette.raised.withAlpha(.65));
             if (name.empty())
                 pageGlyph(*painter, 0, badge, ink);
             else if (const auto it = std::ranges::find_if(controls::catalog(), [&](const auto &def) {
                          return name == def.category;
                      }); it != controls::catalog().end()) {
-                painter->fillRoundedRect(badge, 8, ui::Color::rgb(colors[index % 6]));
-                glyph(*painter, *it, centered(badge, 21), kCanvasInk);
+                glyph(*painter, *it, centered(badge, 19), ink);
             }
-            text(*painter, {row.x + 62, row.y, row.width - 66, row.height}, name.empty() ? tr("All Controls") : tr(name.c_str()),
-                 12, ink);
+            text(*painter, {row.x + 47, row.y, row.width - 52, row.height}, name.empty() ? tr("All Controls") : tr(name.c_str()),
+                 12, ink, selected);
         };
-        categoryRow({}, 0);
+        categoryRow({});
         std::vector<std::string> groups;
         for (const auto &def : controls::catalog()) {
             if (std::ranges::find(groups, def.category) == groups.end()) {
                 groups.emplace_back(def.category);
-                categoryRow(groups.back(), groups.size());
+                categoryRow(groups.back());
             }
         }
         const auto clip = galleryClip();
@@ -784,8 +788,8 @@ private:
             }
             if (painter && artwork) {
                 const ui::RectF screen {left + width * .52, y + 17, width * .48 - 16, height - 34};
-                painter->fillRoundedRect(screen, 5, ui::LinearGradient::vertical(screen,
-                        ui::Color::rgb(0x558f9b), ui::Color::rgb(0x995c82)));
+                painter->fillRoundedRect(screen, 8, ui::LinearGradient::vertical(screen,
+                        palette.raised.withAlpha(.58), palette.accent.withAlpha(.19)));
                 painter->fillRoundedRect({screen.x + 3, screen.y + 3, screen.width - 6, 8}, 3, panel::textColor(.17));
                 const double tile = std::min((screen.width - 22) / 11, 13.0);
                 const double x = screen.right() - tile * 4 - 12;

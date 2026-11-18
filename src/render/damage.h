@@ -59,10 +59,18 @@ inline BackdropReach backdropReach(const GlassParams &glass, double scale)
             : 0;
     if (glass.enabled && glass.underlay.opacity > 0)
         reach = std::max(reach, 30.0); // softBackdrop's outermost tap
-    if (glass.enabled && std::ranges::any_of(glass.lenses, [](const GlassLens &lens) {
-            return lens.finish != GlassFinish::Lens;
-        }))
-        reach = std::max(reach, 50.0 + glass.displacement * (0.24 / 0.45));
+    if (glass.enabled) {
+        for (const auto &lens : glass.lenses) {
+            if (lens.finish == GlassFinish::Lens)
+                continue;
+            // The whole sheet reads two colour bands around its centre.
+            // A change there can affect pixels far beyond the diffuser taps.
+            const double x = lens.bounds.width() * .5 + std::min(lens.bounds.width() * .29, 108.);
+            const double y = lens.bounds.height() * .5 + std::min(lens.bounds.height() * .22, 70.)
+                    + std::min(lens.bounds.height() * .052, 28.);
+            reach = std::max({reach, x, y, 50.0 + glass.displacement * (0.24 / 0.45)});
+        }
+    }
     return {int(std::ceil((kGaussianMaxReach + 5) * texel + reach)),
             int(std::ceil((2 * kGaussianMaxReach + 4) * texel))};
 }

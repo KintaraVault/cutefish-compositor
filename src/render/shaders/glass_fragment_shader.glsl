@@ -204,6 +204,26 @@ float frostWeight(int i) {
     return i == 0 ? 0.375 : (i == -1 || i == 1 ? 0.25 : 0.0625);
 }
 
+// Choose a calm, regional palette rather than painting the silhouette of each
+// window into the editor. Read two broad bands from the existing scene capture
+// so adjacent warm/cool wallpapers actually produce different palettes.
+vec3 regionalPalette(vec2 uv, vec2 margin) {
+    vec3 average = vec3(0.0);
+    float weight = 0.0;
+    for (int i = -1; i <= 1; ++i) {
+        float x = float(i) * min(uLens.z * 0.29, 108.0 * uRim.y);
+        for (int j = -1; j <= 1; ++j) {
+            float y = float(j) * min(uLens.w * 0.052, 28.0 * uRim.y);
+            vec3 incident = backdrop(clamp(uv + vec2(x, y) / uCoverage, margin, 1.0 - margin));
+            // Give less weight to the highlights of bright white windows.
+            float w = 1.0 - 0.55 * smoothstep(0.55, 1.0, luminance(incident));
+            average += w * incident * incident;
+            weight += w;
+        }
+    }
+    return sqrt(average / weight);
+}
+
 vec3 frostedSheet(vec2 p, vec2 halfSize, float r, float band, float sd, vec2 uv, vec2 margin) {
     vec2 bend = 0.24 * lensOffset(p, halfSize, r, band) / uCoverage;
     vec2 stepUv = 25.0 * uRim.y / uCoverage;
@@ -222,11 +242,25 @@ vec3 frostedSheet(vec2 p, vec2 halfSize, float r, float band, float sd, vec2 uv,
 
     // Keep wallpaper colour separate from the neutral tone curve. A neutral
     // backdrop stays neutral, while either theme keeps enough contrast for ink.
-    float y = luminance(scene);
-    vec3 chroma = scene - vec3(y);
     bool dark = uFrosted < 0.0;
-    float value = dark ? 0.092 + 0.24 * y : 0.53 + 0.32 * y;
-    float spread = dark ? 0.34 : 0.71;
+    float vertical = clamp(0.5 + p.y / max(uLens.w, 1.0), 0.0, 1.0);
+    float bandY = min(uLens.w * 0.22, 70.0 * uRim.y);
+    vec2 centerUv = uv - p / uCoverage;
+    vec3 top = regionalPalette(centerUv - vec2(0, bandY) / uCoverage, margin);
+    vec3 bottom = regionalPalette(centerUv + vec2(0, bandY) / uCoverage, margin);
+    vec3 regional = mix(top, bottom, smoothstep(0.0, 1.0, vertical));
+    float y = luminance(scene);
+    float regionalY = luminance(regional);
+    vec3 chroma = mix(scene - vec3(y), regional - vec3(regionalY), 0.72);
+    // Bound chroma independently from lightness; a gray backdrop stays gray
+    // and strong wallpaper colors never compete with the editor's labels.
+    float peak = max(abs(chroma.r), max(abs(chroma.g), abs(chroma.b)));
+    chroma *= min(1.0, (dark ? 0.25 : 0.29) / max(peak, 0.001));
+    bool gallery = abs(uFrosted) > 1.5;
+    float tone = mix(y, regionalY, 0.72);
+    float value = dark ? (gallery ? 0.13 : 0.12) + 0.15 * tone - 0.034 * vertical
+                       : (gallery ? 0.73 : 0.67) + 0.17 * tone;
+    float spread = dark ? 0.53 : 0.66;
     float negative = -min(chroma.r, min(chroma.g, chroma.b));
     float positive = max(chroma.r, max(chroma.g, chroma.b));
     spread = min(spread, min((value - 0.035) / max(negative, 0.001),
