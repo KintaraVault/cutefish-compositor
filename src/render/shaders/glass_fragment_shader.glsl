@@ -19,6 +19,7 @@ uniform float uSaturation;
 // Intensity, and one logical pixel in device pixels.
 uniform vec2 uRim;
 uniform float uRimWrap;
+uniform float uBackdropReflection;
 uniform vec4 uTint;
 uniform vec2 uTone;
 // The lens within the quad, in device pixels; a client shape masks the quad.
@@ -29,6 +30,12 @@ uniform vec4 uShapeRect;
 uniform float uOpacity;
 
 float roundRect(vec2 p, vec2 halfSize, float r) {
+    if (uBackdropReflection > 0.0) {
+        // Match the actual circular arcs of the shell's path mask, so the
+        // optical lip doesn't disappear into, or detach from, the corners.
+        vec2 q = abs(p) - halfSize + r;
+        return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+    }
     return roundedDistance(p, vec4(-halfSize, halfSize * 2.0), vec2(r));
 }
 
@@ -47,6 +54,8 @@ vec2 outwardAt(vec2 p, vec2 halfSize, float r) {
     vec2 q = edge + radius;
     if (min(radius.x, radius.y) <= 0.0 || min(q.x, q.y) <= 0.0)
         return edge.x > edge.y ? vec2(sign(p.x), 0.0) : vec2(0.0, sign(p.y));
+    if (uBackdropReflection > 0.0)
+        return sign(p) * normalize(q);
     return sign(p) * cornerNormal(q / radius, radius);
 }
 
@@ -82,6 +91,42 @@ vec2 lensOffset(vec2 p, vec2 halfSize, float r, float band) {
 
 vec3 backdrop(vec2 uv) {
     return texture2D(uTexture, vec2(uv.x, 1.0 - uv.y)).rgb;
+}
+
+float luminance(vec3 rgb) {
+    return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
+                  float sd, float band, vec2 margin) {
+    float pixel = uRim.y;
+    float d = max(-sd, 0.0);
+    vec2 tap = outward / uCoverage;
+    vec2 tangent = vec2(-tap.y, tap.x);
+    // The lip reflects a small patch outside the outline. The footprint fans
+    // out with the bevel slope; opposite sides can pick up different colours.
+    float reach = max(d, 0.0) + band * mix(0.45, 1.15, length(normal.xy));
+    vec2 ray = uv + tap * reach;
+    vec3 environment = 0.50 * backdrop(clamp(ray, margin, 1.0 - margin));
+    environment += 0.25 * backdrop(clamp(ray + tangent * band * 0.55, margin, 1.0 - margin));
+    environment += 0.25 * backdrop(clamp(ray - tangent * band * 0.55, margin, 1.0 - margin));
+    vec3 local = backdrop(clamp(uv, margin, 1.0 - margin));
+    float fresnel = pow(1.0 - clamp(normal.z, 0.0, 1.0), 2.0);
+    float lip = smoothstep(-0.35, pixel * 0.62, d) * (1.0 - smoothstep(pixel * 1.18, pixel * 2.65, d));
+    float shoulder = exp(-d / max(pixel, band * 0.48));
+    float ambient = luminance(environment);
+    float contrast = clamp(0.65 + 1.4 * (ambient - luminance(local)), 0.30, 1.0);
+    float weight = uRim.x * uBackdropReflection;
+    // Colour of both the reflection and the thin transmission caustic comes
+    // from the capture. An unlit rim can darken rather than gaining white ink.
+    vec3 color = mix(transmission, environment, weight * (0.46 * lip + 0.40 * fresnel * shoulder));
+    vec3 caustic = pow(max(environment, vec3(0.0)), vec3(0.38));
+    // Lens gain is greater on the shoulder facing the incident field, but
+    // its magnitude and spectrum are still taken from the scene.
+    float direction = 0.73 + 0.27 * abs(dot(outward, normalize(uLight.xy)));
+    color += caustic * (weight * contrast * direction * (0.90 * lip + 0.16 * shoulder)) * (1.0 - color);
+    float silhouette = 1.0 - smoothstep(0.15 * pixel, 1.25 * pixel, d);
+    return color * (1.0 - weight * silhouette * mix(0.12, 0.27, ambient));
 }
 
 // Sample each ray before averaging: averaging offsets loses the pixel footprint
@@ -122,7 +167,7 @@ void shade() {
         refractedAt(p, vec2(-0.375, 0.125), halfSize, r, band, uv, texel, margin) +
         refractedAt(p, vec2(-0.125, -0.375), halfSize, r, band, uv, texel, margin));
 
-    float luma = dot(refracted, vec3(0.2126, 0.7152, 0.0722));
+    float luma = luminance(refracted);
     refracted = max(mix(vec3(luma), refracted, uSaturation), 0.0);
     vec3 color = mix(refracted, uTint.rgb, uTint.a);
     color = mix(color, vec3(1.0), uTone.x * (1.0 - smoothstep(0.015, 0.34, luma)));
@@ -140,7 +185,7 @@ void shade() {
     // Screen blend rather than addition, so light over a bright backdrop
     // brightens towards white instead of blowing out. Without a rim the edge is
     // not lit here: the window outline layer draws it, over the client buffer.
-    vec3 lit = vec3(specular + sheen);
+    vec3 lit = vec3(specular + sheen) * (1.0 - uBackdropReflection);
     color = color + lit - color * lit;
     float peak = max(color.r, max(color.g, color.b));
     if (peak > 1.0)
@@ -150,7 +195,10 @@ void shade() {
     // down catch a light from above: a lifted hairline with a glow fading
     // inwards, weaker along the bottom. Sharing a pixel, the two would cancel
     // into a smudge, and a lit edge with nothing outside it reads as cut off.
-    if (uRim.x > 0.0) {
+    if (uBackdropReflection > 0.0) {
+        color = reflectedRim(color, uv, outwardAt(insideLens(p, halfSize, r), halfSize, r),
+                             normal, sd, band, margin);
+    } else if (uRim.x > 0.0) {
         vec2 outward = outwardAt(insideLens(p, halfSize, r), halfSize, r);
         // Surface-local y grows downwards, so the top faces -y.
         float lit = mix(uRimWrap, 1.0, abs(outward.y)) * mix(1.0, mix(0.35, 0.77, uRimWrap), 0.5 + 0.5 * outward.y);

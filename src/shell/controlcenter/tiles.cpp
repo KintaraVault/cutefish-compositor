@@ -224,7 +224,7 @@ void CardItem::layout()
     const double padding = m_controlStyle ? 17 : theme.largeSpacing;
     const double height = geometry().height;
     const ui::RectF slot = plateRect();
-    const double size = m_controlStyle ? (m_small ? 28 : 25) : kIconSize;
+    const double size = m_controlStyle ? std::min(m_small ? 32.0 : 28.0, height * .39) : kIconSize;
     const ui::RectF icon {slot.x + (slot.width - size) / 2, slot.y + (slot.height - size) / 2, size, size};
     m_svg->setGeometry(icon);
     m_glyph->setSize(size);
@@ -501,8 +501,9 @@ void MediaTile::layout()
         m_artist->setVisible(!m_artist->text().empty());
         m_artist->setColor(kWhite.withAlpha(.74));
         m_artist->setGeometry({17, h - 77, w - 34, 17});
+        const double slot = std::min(34., w / 5);
         for (size_t i = 0; i < 3; ++i)
-            std::array {m_previous, m_play, m_next}[i]->setGeometry({w * (i + 1) / 4 - 17, h - 53, 34, 34});
+            std::array {m_previous, m_play, m_next}[i]->setGeometry({w * (i + 1) / 4 - slot / 2, h - 36 - slot / 2, slot, slot});
         m_play->setOpacity(m_play->isEnabled() ? 1 : .68);
         return;
     }

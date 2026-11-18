@@ -225,6 +225,7 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
     // The shader derives the hairline widths from one logical pixel.
     glUniform2f(uniform("uRim"), std::clamp(glass.rim, 0.0f, 1.0f), std::max(1.0f, float(scale)));
     glUniform1f(uniform("uRimWrap"), std::clamp(glass.rimWrap, 0.0f, 1.0f));
+    glUniform1f(uniform("uBackdropReflection"), std::clamp(glass.backdropReflection, 0.0f, 1.0f));
 }
 
 bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, const base::Rect &coverage,

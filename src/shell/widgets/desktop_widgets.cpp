@@ -22,6 +22,8 @@
 #include "ui/keys.h"
 #include "ui/menu.h"
 #include "ui/popup_glass.h"
+#include "ui/search_field.h"
+#include <unicode/unistr.h>
 
 namespace cutefish::shell {
 namespace {
@@ -50,8 +52,8 @@ render::GlassParams widgetGlass()
     glass.depth = 13;
     glass.displacement = 14;
     glass.chroma = .012f;
-    glass.rim = .53f;
-    glass.rimWrap = .65f;
+    glass.rim = .85f;
+    glass.backdropReflection = 1.f;
     return glass;
 }
 
@@ -134,7 +136,9 @@ public:
             const ui::PointF c {rect.x + featureWidth / 2, rect.y + rect.height / 2};
             const double radius = std::min(featureWidth, rect.height) * .38;
             const ui::RectF face {c.x - radius, c.y - radius, 2 * radius, 2 * radius};
-            const auto fill = panel::dark() ? ui::Color::rgb(0x1D1D20) : ui::Color::rgb(0xFDFAF6);
+            const bool dark = panel::dark();
+            const auto fill = ui::Color::rgb(dark ? 0x1D1D20 : 0xFDFAF6);
+            const auto dial = ui::Color::rgb(dark ? 0xFFFFFF : 0x1D1D20);
             painter.fillRoundedRect(face, radius, fill);
             painter.strokeRoundedRect(inset(face, .5), radius, ink(.17));
             const auto pointAt = [&](double turns, double distance) -> ui::PointF {
@@ -142,10 +146,10 @@ public:
                 return {c.x + std::sin(a) * distance, c.y - std::cos(a) * distance};
             };
             for (int i = 0; i < 60; ++i)
-                painter.drawLine(pointAt(i / 60.0, radius * (i % 5 ? .9 : .85)), pointAt(i / 60.0, radius * .95), ink(i % 5 ? .23 : .75), i % 5 ? 1 : 2);
+                painter.drawLine(pointAt(i / 60.0, radius * (i % 5 ? .9 : .85)), pointAt(i / 60.0, radius * .95), dial.withAlpha(i % 5 ? .23 : .75), i % 5 ? 1 : 2);
             for (int i = 1; i <= 12; ++i) {
                 const auto p = pointAt(i / 12.0, radius * .70);
-                text(painter, {p.x - 9, p.y - 9, 18, 18}, std::to_string(i), radius > 46 ? 8 : 7, ink(.88), true, true);
+                text(painter, {p.x - 9, p.y - 9, 18, 18}, std::to_string(i), radius > 46 ? 8 : 7, dial.withAlpha(.88), true, true);
             }
             const auto hand = [&](double turns, double length, double width, ui::Color color) {
                 ui::Path line;
@@ -153,8 +157,8 @@ public:
                 line.lineTo(pointAt(turns, radius * length));
                 painter.strokePath(line, color, width);
             };
-            hand((tm.tm_hour % 12 + tm.tm_min / 60.) / 12., .46, 4, ink());
-            hand((tm.tm_min + tm.tm_sec / 60.) / 60., .72, 2.8, ink());
+            hand((tm.tm_hour % 12 + tm.tm_min / 60.) / 12., .46, 4, dial);
+            hand((tm.tm_min + tm.tm_sec / 60.) / 60., .72, 2.8, dial);
             hand(tm.tm_sec / 60., .80, 1.25, ui::Color::rgb(0xF1942B));
             painter.fillRoundedRect({c.x - 2.2, c.y - 2.2, 4.4, 4.4}, 2.2, ui::Color::rgb(0xF1942B));
             if (wide) {
@@ -288,15 +292,39 @@ private:
 class DesktopWidgets::Gallery final : public ui::View
 {
 public:
-    explicit Gallery(DesktopWidgets &owner) : m_owner(owner) { setTracksHover(true); }
+    explicit Gallery(DesktopWidgets &owner) : m_owner(owner)
+    {
+        setTracksHover(true);
+        m_search = addChild<ui::SearchField>(tr("Search Widgets"));
+        m_search->setName("widget-search");
+        m_search->setFill(ui::ColorRecipe(ink(.14)));
+        m_search->setGlyphColor(ui::ColorRecipe(ink(.80)));
+        m_search->setTextColor(ui::ColorRecipe(ink()));
+        m_search->setPlaceholderColor(ui::ColorRecipe(ink(.76)));
+        m_search->setFontSize(15);
+        m_search->onTextChanged = [this] {
+            const auto kinds = filtered();
+            if (!kinds.empty() && std::ranges::find(kinds, m_kind) == kinds.end())
+                m_kind = kinds.front();
+            m_scroll = 0;
+            requestPaint();
+        };
+    }
+
+    void setRestingGeometry(base::Rect bounds)
+    {
+        m_resting = bounds;
+        position();
+    }
 
     void reveal()
     {
+        m_reveal = 0;
+        position();
         m_fade = std::make_unique<ui::Animation>(window());
-        m_fade->setDuration(240ms);
+        m_fade->setDuration(340ms);
         m_fade->setEasing(ui::Animation::Easing::OutCubic);
-        setOpacity(.35);
-        m_fade->onUpdate = [this](double t) { setOpacity(.35 + .65 * t); };
+        m_fade->onUpdate = [this](double t) { m_reveal = t; position(); };
         m_fade->start();
     }
 
@@ -304,40 +332,82 @@ protected:
     bool acceptsPointer() const override { return true; }
     bool acceptsFocus() const override { return true; }
 
+    void layout() override { m_search->setGeometry({24, 23, sidebar() - 48, 36}); }
+
     void paint(ui::Painter &painter) override
     {
-        text(painter, {22, 12, geometry().width - 110, 35}, tr("Desktop Widgets"), 17, ink(), true);
+        const auto width = geometry().width;
+        const auto height = geometry().height;
+        const auto side = sidebar();
+        painter.save();
+        painter.clipRoundedRect(localRect(), kRadius);
+        painter.fillRect({0, 0, side, height}, ink(.055));
+        painter.fillRect({side, 0, 1, height}, ink(.17));
         const auto r = doneRect();
-        painter.fillRoundedRect(r, r.height / 2, accent());
-        text(painter, r, tr("Done"), 10, ui::Color::rgb(0xFFFFFF), true, true);
-        painter.fillRect({0, 55, geometry().width, 1}, ink(.13));
-        painter.fillRect({139, 56, 1, geometry().height - 56}, ink(.13));
-        for (int i = 0; i < 3; ++i) {
-            const auto row = kindRect(i);
-            if (int(m_kind) == i || control_paint::contains(row, m_hover))
-                painter.fillRoundedRect(row, 8, ink(int(m_kind) == i ? .14 : .07));
-            text(painter, inset(row, 9), title(Kind(i)), 10, ink(), int(m_kind) == i);
+        painter.fillRoundedRect(r, r.height / 2, accent().withAlpha(contains(r, m_hover) ? 1 : .85));
+        text(painter, r, tr("Done"), 11, ink(), true, true);
+        const auto kinds = filtered();
+        auto all = kindRect(0);
+        if (m_all || contains(all, m_hover))
+            painter.fillRoundedRect(all, 10, ink(m_all ? .20 : .09));
+        for (int i = 0; i < 4; ++i)
+            painter.fillRoundedRect({all.x + 14 + i % 2 * 8., all.y + 16 + i / 2 * 8., 5, 5}, 2.5, ink());
+        text(painter, {all.x + 49, all.y, all.width - 55, all.height}, tr("All Widgets"), 11, ink());
+        for (size_t i = 0; i < kinds.size(); ++i) {
+            const Kind kind = kinds[i];
+            const auto row = kindRect(i + 1);
+            const bool selected = !m_all && m_kind == kind;
+            if (selected || contains(row, m_hover))
+                painter.fillRoundedRect(row, 10, ink(selected ? .20 : .09));
+            const ui::RectF badge {row.x + 11, row.y + 8, 29, 29};
+            static constexpr std::array colors {0x282931, 0xc64a55, 0x37a569};
+            painter.fillRoundedRect(badge, 7, ui::Color::rgb(colors[int(kind)]));
+            const auto c = center(badge);
+            if (kind == Kind::Clock) {
+                painter.strokeRoundedRect(inset(badge, 6), 9, ink(), 1.3);
+                painter.drawLine({c.x, c.y - 5}, c, ink(), 1.4);
+                painter.drawLine(c, {c.x + 4, c.y + 2}, ink(), 1.4);
+            } else if (kind == Kind::Calendar) {
+                painter.strokeRoundedRect(inset(badge, 7), 2, ink(), 1.4);
+                painter.drawLine({badge.x + 7, badge.y + 12}, {badge.right() - 7, badge.y + 12}, ink(), 1.4);
+            } else {
+                painter.strokeRoundedRect({c.x - 8, c.y - 4, 15, 8}, 2, ink(), 1.3);
+                painter.fillRoundedRect({c.x - 6, c.y - 2, 10, 4}, 1, ink());
+                painter.drawLine({c.x + 9, c.y - 1}, {c.x + 9, c.y + 1}, ink(), 1.2);
+            }
+            text(painter, {row.x + 49, row.y, row.width - 55, row.height}, title(kind), 11, ink(), selected);
         }
-        const auto fill = panel::dark() ? ui::Color::rgb(0x353538) : ui::Color::rgb(0xF1F0F1);
-        for (int i = 0; i < 2; ++i) {
-            const auto rect = previewRect(i);
-            painter.fillRoundedRect(rect, 21, fill);
-            Card::artwork(painter, rect, m_kind, i, m_owner.m_controls.batteryCharge(), m_owner.m_controls.onBattery());
-            const ui::RectF label {rect.x, rect.bottom() + 5, rect.width, 26};
-            text(painter, label, i ? tr("Medium") : tr("Small"), 9.5, ink(.77), false, true);
-            if (control_paint::contains(rect, m_hover))
-                sign(painter, {rect.x + 5, rect.y + 5, 22, 22}, true, ui::Color::rgb(0x32994E), ui::Color::rgb(0xFFFFFF));
+        text(painter, {side + 30, 16, width - side - 142, 44},
+             m_all ? tr("All Widgets") : title(m_kind), 17, ink(), true);
+        const auto clip = previewClip();
+        painter.save();
+        painter.clip(clip);
+        if (kinds.empty())
+            text(painter, clip, tr("No Widgets Found"), 16, ink(.78), true, true);
+        int group = 0;
+        for (const Kind kind : shownKinds()) {
+            const auto small = previewRect(group, 0);
+            if (m_all)
+                text(painter, {clip.x + 12, small.y - 34, clip.width - 24, 29}, title(kind), 13, ink(), true);
+            for (int i = 0; i < 2; ++i) {
+                auto rect = previewRect(group, i);
+                drawPreview(painter, rect, kind, i);
+                text(painter, {rect.x, rect.bottom() + 4, rect.width, 29}, i ? tr("Medium") : tr("Small"), 10, ink(.79), false, true);
+                if (contains(rect, m_hover) && contains(clip, m_hover))
+                    sign(painter, {rect.x + 5, rect.y + 5, 24, 24}, true, ui::Color::rgb(0x32994E), ink());
+            }
+            ++group;
         }
-        if (m_held && m_drag) {
-            auto r = previewRect(*m_held);
-            r.x = m_hover.x - r.width / 2;
-            r.y = m_hover.y - r.height / 2;
-            painter.drawShadow(r, 21, 12, ui::Color {0, 0, 0, 90}, {0, 5});
-            painter.fillRoundedRect(r, 21, fill);
-            Card::artwork(painter, r, m_kind, *m_held, m_owner.m_controls.batteryCharge(), m_owner.m_controls.onBattery());
+        painter.restore();
+        const double content = contentHeight();
+        if (content > clip.height) {
+            const double thumb = std::max(21., clip.height * clip.height / content);
+            const double offset = m_scroll / (content - clip.height) * (clip.height - thumb);
+            painter.fillRoundedRect({clip.right() - 3, clip.y + offset, 3, thumb}, 1.5, ink(.28));
         }
-        text(painter, {155, geometry().height - 40, geometry().width - 172, 25},
-             tr("Click a widget to add it, or drag it onto the desktop."), 9, ink(.65), false, true);
+        text(painter, {side + 16, height - 35, width - side - 32, 27},
+             tr("Click a widget to add it, or drag it onto the desktop."), 9.5, ink(.71), false, true);
+        painter.restore();
     }
 
     void hoverMove(const ui::PointerEvent &event) override { m_hover = event.position; requestPaint(); }
@@ -348,17 +418,24 @@ protected:
             return;
         setFocus();
         m_origin = m_hover = event.position;
-        m_held.reset();
-        m_drag = false;
-        for (int i = 0; i < 2; ++i)
-            if (control_paint::contains(previewRect(i), m_origin))
-                m_held = i;
+        cancelDrag();
+        if (contains(previewClip(), m_origin)) {
+            const auto kinds = shownKinds();
+            for (size_t group = 0; group < kinds.size(); ++group)
+                for (int i = 0; i < 2; ++i) {
+                    const auto rect = previewRect(group, i);
+                    if (contains(rect, m_origin))
+                        m_held = Pick {kinds[group], bool(i), rect};
+                }
+        }
     }
     void pointerMove(const ui::PointerEvent &event) override
     {
         m_hover = event.position;
         if (m_held && std::hypot(m_hover.x - m_origin.x, m_hover.y - m_origin.y) > 5)
             m_drag = true;
+        if (m_drag)
+            updateDrag();
         requestPaint();
     }
     void pointerRelease(const ui::PointerEvent &event) override
@@ -369,51 +446,154 @@ protected:
         if (control_paint::contains(doneRect(), m_origin) && control_paint::contains(doneRect(), p)) {
             scheduleDone();
         } else if (m_held) {
-            if (!m_drag && control_paint::contains(previewRect(*m_held), p))
-                m_owner.add(m_kind, *m_held);
-            else if (m_drag && !control_paint::contains(localRect(), p)) {
-                const auto origin = m_owner.m_gallery->geometry().topLeft();
-                const int w = *m_held ? kWideSize : kSize;
-                m_owner.add(m_kind, *m_held, origin + base::Point(int(std::lround(p.x)) - w / 2, int(std::lround(p.y)) - kSize / 2));
-            }
+            if (!m_drag && contains(m_held->rect, p))
+                m_owner.add(m_held->kind, m_held->wide);
+            else if (m_drag && !contains(localRect(), p))
+                m_owner.add(m_held->kind, m_held->wide, dragBounds(p).topLeft());
         } else {
-            for (int i = 0; i < 3; ++i)
-                if (control_paint::contains(kindRect(i), p) && control_paint::contains(kindRect(i), m_origin))
-                    m_kind = Kind(i);
+            const auto kinds = filtered();
+            for (size_t i = 0; i <= kinds.size(); ++i)
+                if (contains(kindRect(i), p) && contains(kindRect(i), m_origin)) {
+                    m_all = i == 0;
+                    if (i)
+                        m_kind = kinds[i - 1];
+                    m_scroll = 0;
+                }
         }
-        m_held.reset();
-        m_drag = false;
+        cancelDrag();
+        m_owner.m_gallery->activate();
+        setFocus();
         requestPaint();
     }
     bool keyPress(const ui::KeyEvent &event) override
     {
         if (event.key == ui::key::Escape) {
             if (m_held) {
-                m_held.reset();
-                m_drag = false;
-                requestPaint();
+                cancelDrag();
             } else {
                 scheduleDone();
             }
         } else if (event.key == ui::key::Down || event.key == ui::key::Up) {
-            m_kind = Kind((int(m_kind) + (event.key == ui::key::Down ? 1 : 2)) % 3);
+            const auto kinds = filtered();
+            if (kinds.empty())
+                return true;
+            const int count = int(kinds.size());
+            const int current = int(std::ranges::find(kinds, m_kind) - kinds.begin());
+            m_kind = kinds[(current + (event.key == ui::key::Down ? 1 : count - 1)) % count];
+            m_all = false;
+            m_scroll = 0;
             requestPaint();
         } else if (event.key == ui::key::Return) {
-            m_owner.add(m_kind, event.modifiers & ui::ShiftModifier);
+            if (!filtered().empty())
+                m_owner.add(m_kind, event.modifiers & ui::ShiftModifier);
         } else {
             return false;
         }
         return true;
     }
 
-private:
-    ui::RectF doneRect() const { return {geometry().width - 78, 14, 62, 29}; }
-    ui::RectF kindRect(int kind) const { return {12, 68. + 35 * kind, 115, 33}; }
-    ui::RectF previewRect(int wide) const
+    bool scroll(const ui::ScrollEvent &event) override
     {
-        const double size = std::min({132., (geometry().width - 182) / 3, geometry().height - 145});
-        const double x = (geometry().width + 140 - size * 3 - 14) / 2;
-        return {x + (wide ? size + 14 : 0), 75, size * (wide ? 2 : 1), size};
+        if (!contains(previewClip(), m_hover) || m_drag)
+            return false;
+        m_scroll = std::clamp(m_scroll + event.deltaY, 0., std::max(0., contentHeight() - previewClip().height));
+        requestPaint();
+        return true;
+    }
+
+private:
+    static bool contains(const ui::RectF &rect, ui::PointF point) { return control_paint::contains(rect, point); }
+    struct Pick { Kind kind; bool wide; ui::RectF rect; };
+    class LiftedCard final : public ui::View
+    {
+    public:
+        LiftedCard(DesktopWidgets &owner, Kind kind, bool wide) : m_owner(owner), m_kind(kind), m_wide(wide) {}
+        void paint(ui::Painter &painter) override
+        {
+            Card::artwork(painter, localRect(), m_kind, m_wide,
+                          m_owner.m_controls.batteryCharge(), m_owner.m_controls.onBattery());
+        }
+    private:
+        DesktopWidgets &m_owner;
+        Kind m_kind;
+        bool m_wide;
+    };
+    base::Rect dragBounds(ui::PointF p) const
+    {
+        const int w = m_held->wide ? kWideSize : kSize;
+        const auto r = m_held->rect;
+        const auto origin = m_owner.m_gallery->geometry().topLeft();
+        return {origin.x() + int(std::lround(p.x - (m_origin.x - r.x) * w / r.width)),
+                origin.y() + int(std::lround(p.y - (m_origin.y - r.y) * kSize / r.height)), w, kSize};
+    }
+    void updateDrag()
+    {
+        const auto rect = dragBounds(m_hover);
+        if (!m_lifted) {
+            m_lifted = std::make_unique<ShellWindow>(m_owner.m_shell, wm::WindowRole::Picker, false);
+            m_lifted->setFocusPolicy(wm::FocusPolicy::NoFocus);
+            m_lifted->setInputRegion(base::Region());
+            ui::PopupGlass::prepare(*m_lifted->window());
+            m_lifted->setContentView(std::make_unique<LiftedCard>(m_owner, m_held->kind, m_held->wide));
+            ui::Path shape;
+            shape.addRoundedRect({0, 0, double(rect.width()), double(rect.height())}, kRadius, kRadius);
+            m_lifted->setBackgroundBlur({0, 0, rect.width(), rect.height()}, kRadius, widgetGlass(), shape);
+            m_lifted->setGeometry(rect);
+            m_lifted->show();
+        } else {
+            m_lifted->setPosition(rect.topLeft());
+        }
+    }
+    void cancelDrag()
+    {
+        m_lifted.reset();
+        m_held.reset();
+        m_drag = false;
+        requestPaint();
+    }
+    double sidebar() const { return std::clamp(geometry().width * .27, 142., 270.); }
+    ui::RectF doneRect() const { return {geometry().width - 98, 22, 76, 34}; }
+    ui::RectF kindRect(int kind) const { return {17, 70. + 46 * kind, sidebar() - 34, 45}; }
+    ui::RectF previewClip() const { return {sidebar() + 17, 66, geometry().width - sidebar() - 34, geometry().height - 104}; }
+    double previewSize() const { return std::max(25., std::min(214., (previewClip().width - 40) / 3.1)); }
+    double groupPitch() const { return previewSize() + 93; }
+    double contentHeight() const
+    {
+        const auto count = shownKinds().size();
+        return count ? count * groupPitch() - 19. : 0.;
+    }
+    ui::RectF previewRect(int group, int wide) const
+    {
+        const double size = previewSize();
+        const double gap = size * kGap / kSize;
+        const double x = previewClip().x + (previewClip().width - size * 3 - gap * 2) / 2;
+        return {x + (wide ? size + gap : 0), 106 + groupPitch() * group - m_scroll, wide ? size * 2 + gap : size, size};
+    }
+    std::vector<Kind> filtered() const
+    {
+        const auto query = icu::UnicodeString::fromUTF8(m_search->text()).foldCase();
+        std::vector<Kind> kinds;
+        for (const Kind kind : {Kind::Clock, Kind::Calendar, Kind::Battery})
+            if (query.isEmpty() || icu::UnicodeString::fromUTF8(title(kind)).foldCase().indexOf(query) >= 0)
+                kinds.push_back(kind);
+        return kinds;
+    }
+    std::vector<Kind> shownKinds() const
+    {
+        auto kinds = filtered();
+        if (!m_all && std::ranges::find(kinds, m_kind) != kinds.end())
+            return {m_kind};
+        return kinds;
+    }
+    void position()
+    {
+        m_owner.m_gallery->setGeometry(m_resting.translated({0, int(std::lround(m_resting.height() * (1 - m_reveal)))}));
+    }
+    void drawPreview(ui::Painter &painter, ui::RectF rect, Kind kind, bool wide) const
+    {
+        const double radius = rect.height * kRadius / kSize;
+        painter.fillRoundedRect(rect, radius, ui::LinearGradient::vertical(rect, ink(.16), ink(.045)));
+        Card::artwork(painter, rect, kind, wide, m_owner.m_controls.batteryCharge(), m_owner.m_controls.onBattery());
     }
     void scheduleDone()
     {
@@ -423,11 +603,17 @@ private:
         });
     }
     DesktopWidgets &m_owner;
+    ui::SearchField *m_search;
     Kind m_kind = Kind::Clock;
+    bool m_all = true;
+    double m_scroll = 0;
+    double m_reveal = 1;
+    base::Rect m_resting;
     ui::PointF m_hover {-1, -1}, m_origin;
-    std::optional<int> m_held;
+    std::optional<Pick> m_held;
     bool m_drag = false;
     std::unique_ptr<ui::Animation> m_fade;
+    std::unique_ptr<ShellWindow> m_lifted;
 };
 
 DesktopWidgets::DesktopWidgets(Shell *shell, ControlCenter &controls, std::string file)
@@ -502,14 +688,17 @@ void DesktopWidgets::updateOutput()
         item->window->show();
     }
     if (m_gallery) {
-        const int w = std::min(700, r.width() - 24);
-        const int h = std::min(293, r.height() - 24);
+        const auto screen = output->bounds;
+        const int w = std::min(1060, screen.width() - 24);
+        const int h = std::min(420, screen.height() - 24);
         m_gallery->setOutput(output->name);
-        m_gallery->setGeometry({r.x() + (r.width() - w) / 2, r.bottom() - h - 12, w, h});
+        m_galleryView->setRestingGeometry({screen.x() + (screen.width() - w) / 2, screen.bottom() - h - 8, w, h});
         auto galleryGlass = widgetGlass();
         galleryGlass.tintAlpha = .16f;
         galleryGlass.highlightRollOff = .73f;
-        m_gallery->setBackgroundBlur({0, 0, w, h}, kRadius, galleryGlass);
+        ui::Path shape;
+        shape.addRoundedRect({0, 0, double(w), double(h)}, kRadius, kRadius);
+        m_gallery->setBackgroundBlur({0, 0, w, h}, kRadius, galleryGlass, shape);
     }
 }
 
@@ -534,17 +723,17 @@ void DesktopWidgets::edit()
     }
     if (area().width() < 360 || area().height() < 215)
         return;
-    m_gallery = std::make_unique<ShellWindow>(m_shell, wm::WindowRole::Panel, false);
+    m_gallery = std::make_unique<ShellWindow>(m_shell, wm::WindowRole::Picker, false);
     ui::PopupGlass::prepare(*m_gallery->window());
     auto gallery = std::make_unique<Gallery>(*this);
     m_galleryView = gallery.get();
     m_gallery->setContentView(std::move(gallery));
     m_gallery->onCloseRequested = [this] { done(); };
     updateOutput();
+    m_galleryView->reveal();
     m_gallery->show();
     m_gallery->activate();
     m_galleryView->setFocus();
-    m_galleryView->reveal();
     repaint();
 }
 

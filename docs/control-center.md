@@ -1,5 +1,12 @@
 # Control Center and desktop widgets
 
+The tile and widget lenses transmit the blurred scene and reflect a wider patch
+around their contours. A bright or colored surface moving behind a tile changes
+its rim as well as its body; the material has no wallpaper-specific palette.
+The desktop widget gallery rises from the physical bottom edge, above the dock.
+Its sidebar filters previews by widget family, and dragging a preview lifts a
+separate, input-transparent glass card that follows the pointer onto the desktop.
+
 Open Control Center from the menu bar. **Edit Controls** opens a searchable
 catalog alongside the four-column grid. Click a preview or drag it into the
 grid to add it. Drag an existing control to move it; Escape cancels the drag.

@@ -55,6 +55,29 @@ inline void text(ui::Painter &painter, const ui::RectF &rect, std::string text, 
     painter.restore();
 }
 
+inline void paragraph(ui::Painter &painter, const ui::RectF &rect, std::string text,
+                      double size, ui::Color ink)
+{
+    if (rect.width <= 0 || rect.height <= 0 || text.empty())
+        return;
+    ui::TextLayout layout(std::move(text), {ui::Theme::current().fontFamily, size}, painter.scale());
+    layout.setDefaultColor(ink);
+    layout.beginLayout();
+    double y = 0;
+    while (y < rect.height) {
+        const int index = layout.createLine(rect.width, {0, y});
+        if (index < 0)
+            break;
+        const auto &line = layout.lineAt(index);
+        y += std::max(1., line.ascent + line.descent);
+    }
+    layout.endLayout();
+    painter.save();
+    painter.clip(rect);
+    layout.draw(painter, {rect.x, rect.y});
+    painter.restore();
+}
+
 inline void sign(ui::Painter &painter, ui::RectF rect, bool plus, ui::Color fill, ui::Color ink)
 {
     painter.fillRoundedRect(rect, rect.height / 2, fill);

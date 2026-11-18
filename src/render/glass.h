@@ -78,6 +78,8 @@ struct GlassParams {
     // outline, which would otherwise stack on it.
     float rim = 0.0f;
     float rimWrap = 0.0f; // minimum highlight around the sides of a lens
+    // Shell glass can reflect the surrounding scene instead of a fixed rim light.
+    float backdropReflection = 0.0f;
     float tintRed = 1.0f;
     float tintGreen = 1.0f;
     float tintBlue = 1.0f;
@@ -136,6 +138,7 @@ inline bool operator==(const GlassParams &a, const GlassParams &b)
             && a.ambientOcclusion == b.ambientOcclusion
             && a.ambientOcclusionRadius == b.ambientOcclusionRadius
             && a.saturation == b.saturation && a.rim == b.rim && a.rimWrap == b.rimWrap
+            && a.backdropReflection == b.backdropReflection
             && a.tintRed == b.tintRed
             && a.tintGreen == b.tintGreen && a.tintBlue == b.tintBlue && a.tintAlpha == b.tintAlpha
             && a.shadowLift == b.shadowLift && a.highlightRollOff == b.highlightRollOff

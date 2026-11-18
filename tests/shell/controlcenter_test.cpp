@@ -55,6 +55,7 @@
 #include "ui/image.h"
 #include "ui/label.h"
 #include "ui/painter.h"
+#include "ui/search_field.h"
 #include "ui/switch.h"
 #include "ui/theme.h"
 #include "ui/window.h"
@@ -432,8 +433,8 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     test::runFor(std::chrono::milliseconds(25));
     capture("-widgets");
     widgets->edit();
-    capture("-warmup");
-    test::runFor(std::chrono::milliseconds(260));
+    capture("-widget-gallery-start");
+    test::runFor(std::chrono::milliseconds(410));
     capture("-widget-gallery");
     cleanup();
 }
@@ -1052,6 +1053,54 @@ TEST_F(ControlCenterTest, WidgetsCanBeAddedDraggedAndRemovedAndSurviveRestart)
     click(relocated.x() + 15, relocated.y() + 15);
     test::runFor(std::chrono::milliseconds(15));
     EXPECT_EQ(3u, widgetWindows().size());
+}
+
+TEST_F(ControlCenterTest, WidgetGalleryRisesFromTheScreenEdgeAndSearches)
+{
+    shell::DesktopWidgets widgets(shell.get(), *center, directory.filePath("widget-gallery.conf"));
+    widgets.edit();
+    const auto locate = [&]() -> shell::ShellWindow * {
+        for (auto *window : shell->windows()) {
+            auto *view = window->window()->contentView();
+            if (!view || !window->isShown())
+                continue;
+            for (const auto &child : view->children())
+                if (child->name() == "widget-search")
+                    return window;
+        }
+        return nullptr;
+    };
+    auto *gallery = locate();
+    ASSERT_NE(nullptr, gallery);
+    auto *search = static_cast<ui::SearchField *>(gallery->window()->contentView()->children().front().get());
+    EXPECT_GE(gallery->geometry().y(), kOutput.bottom() - 8);
+    frames(std::chrono::milliseconds(430));
+    const auto bounds = gallery->geometry();
+    EXPECT_EQ(kOutput.bottom() - 8, bounds.bottom());
+    EXPECT_GT(bounds.bottom(), kOutput.bottom() - kDock);
+    EXPECT_GT(wm::layerFor(gallery->wmWindow()), wm::StackingLayer::Dock);
+    search->setText("does not exist");
+    key(KEY_ENTER);
+    const auto countWidgets = [&] {
+        return std::ranges::count_if(shell->windows(), [](auto *window) {
+            return window->wmWindow() && window->wmWindow()->role() == wm::WindowRole::DesktopWidget;
+        });
+    };
+    EXPECT_EQ(3, countWidgets());
+    search->setText("bAtTeRy");
+    key(KEY_ENTER);
+    frames(std::chrono::milliseconds(60));
+    EXPECT_EQ(4, countWidgets());
+    // Drag the filtered Battery preview out of the gallery. The lift is a
+    // separate glass window and the desktop widget keeps the grab point.
+    press(bounds.x() + 420, bounds.y() + 177);
+    move(715, 350);
+    release();
+    frames(std::chrono::milliseconds(60));
+    EXPECT_EQ(5, countWidgets());
+    key(KEY_ESC);
+    test::runFor(std::chrono::milliseconds(15));
+    EXPECT_EQ(nullptr, locate());
 }
 
 // The real bar opening the panels with clicks on its items, as live.

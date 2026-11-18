@@ -180,12 +180,12 @@ add_library(cutefish-shell-controlcenter STATIC
 )
 target_link_libraries(cutefish-shell-controlcenter PUBLIC cutefish-shell cutefish-shell-osd
     cutefish-shell-menubar cutefish-shell-notification Cutefish::NetworkManagerClient
-    Cutefish::BluezClient Cutefish::AudioClient)
+    Cutefish::BluezClient Cutefish::AudioClient PRIVATE PkgConfig::TitleText)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-controlcenter)
 add_library(cutefish-shell-widgets STATIC
     src/shell/widgets/desktop_widgets.cpp
     src/shell/widgets/desktop_widgets.h)
-target_link_libraries(cutefish-shell-widgets PUBLIC cutefish-shell-controlcenter)
+target_link_libraries(cutefish-shell-widgets PUBLIC cutefish-shell-controlcenter PRIVATE PkgConfig::TitleText)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-widgets)
 # The menu bar's items, which the lock screen shows too.
 add_library(cutefish-shell-bar-items STATIC

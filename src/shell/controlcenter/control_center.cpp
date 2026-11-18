@@ -512,7 +512,7 @@ void ControlCenter::updateWindow(Panel panel)
         material.displacement = 12;
         material.chroma = .015f;
         material.rim = .76f;
-        material.rimWrap = .68f;
+        material.backdropReflection = 1.f;
         material.lenses = open.controlCenter->glassLenses();
     }
     window->setBackgroundBlur(base::Rect(0, 0, open.geometry.width(), height),

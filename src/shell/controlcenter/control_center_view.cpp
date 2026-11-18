@@ -14,6 +14,7 @@
 #include "ui/menu.h"
 #include "ui/search_field.h"
 #include "ui/keys.h"
+#include <unicode/unistr.h>
 
 namespace cutefish::shell {
 namespace {
@@ -39,13 +40,9 @@ double radius(const ui::RectF &r)
     return r.height < 105 ? r.height / 2 : r.height * .24;
 }
 
-std::string folded(const std::string &text)
+icu::UnicodeString folded(const std::string &text)
 {
-    std::string result = text;
-    for (char &ch : result)
-        if (ch >= 'A' && ch <= 'Z')
-            ch += 'a' - 'A';
-    return result;
+    return icu::UnicodeString::fromUTF8(text).foldCase();
 }
 
 ui::RectF centered(ui::RectF rect, double size)
@@ -81,20 +78,24 @@ void glyph(ui::Painter &painter, const controls::Definition &def, ui::RectF rect
 }
 
 void preview(ui::Painter &painter, const controls::Definition &def, Size size, const ui::RectF &r,
-             bool dragging = false)
+             const ControlCenterView::State &state, const MediaState &media, bool dragging = false)
 {
     const auto ink = kCanvasInk;
-    const auto fill = dragging ? ui::Color {79, 79, 79, 240} : ui::Color {0, 0, 0, 57};
     if (dragging)
         painter.drawShadow(r, radius(r), 12, ui::Color {0, 0, 0, 100}, {0, 6});
-    painter.fillRoundedRect(r, radius(r), fill);
-    painter.strokeRoundedRect(inset(r, .5), radius(r) - .5, kCanvasInk.withAlpha(.29));
+    const bool solid = state.active && (size == Size::Small || size == Size::Large);
+    const auto fg = solid ? kCatalogInk : ink;
+    painter.fillRoundedRect(r, radius(r), solid ? ink.withAlpha(.85) : kCatalogInk.withAlpha(dragging ? .68 : .28));
     if (def.id == "media" && size == Size::Large) {
         painter.fillRoundedRect({r.x + 12, r.y + 12, 36, 36}, 8, panel::textColor(.13));
-        text(painter, {r.x + 13, r.bottom() - 64, r.width - 26, 20}, tr("Not Playing"), 9, ink, true);
-        text(painter, {r.x, r.bottom() - 39, r.width, 27}, "⏮    ▶    ⏭", 13, ink, true, true);
+        text(painter, {r.x + 15, r.bottom() - 83, r.width - 30, 25},
+             media.hasPlayer && !media.title.empty() ? media.title : tr("Not Playing"), 11, ink, true);
+        static constexpr std::array buttons {"media-skip-backward-symbolic", "media-playback-start-symbolic", "media-skip-forward-symbolic"};
+        for (size_t i = 0; i < buttons.size(); ++i)
+            painter.drawSvg(panel::artwork(i == 1 && media.playing ? "media-playback-pause-symbolic" : buttons[i], true),
+                            {r.x + r.width * (i + 1) / 4 - 16, r.bottom() - 51, 32, 32}, ink);
     } else if (size == Size::Small) {
-        glyph(painter, def, centered(r, 25), ink);
+        glyph(painter, def, centered(r, std::min(32., r.height * .39)), fg);
     } else if (size == Size::Wide) {
         text(painter, {r.x + 15, r.y + 8, r.width - 30, 24}, tr(def.title), 10, ink, true);
         const ui::RectF track {r.x + 14, r.y + r.height / 2, r.width - 28, 18};
@@ -105,10 +106,17 @@ void preview(ui::Painter &painter, const controls::Definition &def, Size size, c
         const ui::RectF plate {r.x + 17, large ? r.y + 17 : center(r).y - 23, 46, 46};
         const bool network = std::string_view(def.category) == "Connectivity";
         painter.fillRoundedRect(plate, 23, network ? ui::Color::rgb(0x087cf4) : ink.withAlpha(.13));
-        glyph(painter, def, centered(plate, 25), ink);
+        glyph(painter, def, centered(plate, 28), ink);
         const double x = large ? r.x + 17 : r.x + 73;
-        text(painter, {x, large ? r.bottom() - 44 : r.y, r.right() - x - 9, large ? 34.0 : r.height},
-             tr(def.title), 10, ink, true);
+        const double width = r.right() - x - 11;
+        if (large)
+            paragraph(painter, {x, r.bottom() - 49, width, 43}, tr(def.title), 12, fg);
+        else {
+            const bool details = !state.status.empty();
+            text(painter, {x, details ? center(r).y - 22 : r.y, width, details ? 23.0 : r.height}, tr(def.title), 11, fg, true);
+            if (details)
+                text(painter, {x, center(r).y + 1, width, 20}, state.status, 10, fg.withAlpha(.84));
+        }
     }
 }
 
@@ -236,8 +244,10 @@ protected:
 
         if (dragging && held) {
             const auto r = v.tileRect(held->size, {});
-            preview(painter, *controls::find(held->type), held->size,
-                    {hover.x - anchor.x, hover.y - anchor.y, r.width, r.height}, true);
+            const auto *def = controls::find(held->type);
+            preview(painter, *def, held->size,
+                    {hover.x - anchor.x, hover.y - anchor.y, r.width, r.height},
+                    v.state ? v.state(def->id) : State {}, v.m_services.media(), true);
         }
     }
 
@@ -556,8 +566,12 @@ private:
             previews.push_back({def, def->initial, rect});
             if (rect.bottom() + 25 < clip.y || rect.y >= clip.bottom())
                 return;
-            preview(painter, *def, def->initial, rect);
-            text(painter, {rect.x - 4, rect.bottom() + 3, rect.width + 8, 22}, tr(def->title), 10, ink, false, true);
+            preview(painter, *def, def->initial, rect, v.state ? v.state(def->id) : State {}, v.m_services.media());
+            const auto label = tr(def->title);
+            if (rect.width < 100 && std::string_view(label).find(' ') != std::string_view::npos)
+                paragraph(painter, {rect.x + 3, rect.bottom() + 5, rect.width - 6, 39}, label, 10, ink);
+            else
+                text(painter, {rect.x - 4, rect.bottom() + 3, rect.width + 8, 22}, label, 10, ink, false, true);
             const bool selected = previews.size() - 1 == focusedPreview && hasFocus();
             if (selected || (contains(rect, hover) && contains(clip, hover)))
                 sign(painter, {rect.x - 4, rect.y - 5, 25, 25}, true, kGreen, kCanvasInk);
@@ -593,10 +607,9 @@ private:
                     result.push_back(&def);
             return result;
         };
-        if (!query.empty()) {
+        if (!query.isEmpty()) {
             const auto results = matching([&](const auto &def) {
-                return folded(tr(def.title)).find(query) != std::string::npos
-                        || folded(tr(def.category)).find(query) != std::string::npos;
+                return folded(tr(def.title)).indexOf(query) >= 0 || folded(tr(def.category)).indexOf(query) >= 0;
             });
             if (results.empty())
                 title(tr("No Controls Found"), 14);
@@ -611,8 +624,8 @@ private:
             painter.fillRoundedRect({left, y, width, height}, 8, ink.withAlpha(.09));
             text(painter, {left + 26, y + (artwork ? 36 : 10), copyWidth, 30}, tr("What’s New"), 15, ink, true);
             const double introY = y + (artwork ? 67 : 42);
-            text(painter, {left + 26, introY, copyWidth, 20}, tr("Make Control Center your own."), 11, ink);
-            text(painter, {left + 26, introY + 22, copyWidth, 20}, tr("Resize, move, and pin controls."), 11, soft);
+            paragraph(painter, {left + 26, introY, copyWidth, height - (introY - y) - 6},
+                      tr("Control Center is more flexible than ever. Resize and move controls to keep the ones that matter within reach. You can also add your favorite controls to the menu bar."), 11, soft);
             if (artwork) {
                 const ui::RectF screen {left + width * .52, y + 17, width * .48 - 16, height - 34};
                 painter.fillRoundedRect(screen, 5, ui::LinearGradient::vertical(screen,
