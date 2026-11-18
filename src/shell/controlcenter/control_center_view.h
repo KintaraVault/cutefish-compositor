@@ -50,6 +50,7 @@ public:
     double windowHeight(double scale) const;
     double windowWidth() const;
     ui::Path glassShape() const;
+    render::GlassUnderlay glassUnderlay() const;
     std::vector<render::GlassLens> glassLenses() const;
     const std::vector<ui::RectF> &glassTiles() const { return m_glassTiles; }
     bool editing() const;

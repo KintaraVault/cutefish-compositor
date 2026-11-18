@@ -226,6 +226,7 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
     glUniform2f(uniform("uRim"), std::clamp(glass.rim, 0.0f, 1.0f), std::max(1.0f, float(scale)));
     glUniform1f(uniform("uRimWrap"), std::clamp(glass.rimWrap, 0.0f, 1.0f));
     glUniform1f(uniform("uBackdropReflection"), std::clamp(glass.backdropReflection, 0.0f, 1.0f));
+    glUniform1f(uniform("uSoftBackdrop"), 0.0f);
 }
 
 bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, const base::Rect &coverage,
@@ -669,6 +670,18 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
         }
         drawQuad(program, result.get(), quad, false);
     };
+    if (glass.enabled && glass.underlay.opacity > 0 && !glass.underlay.bounds.isEmpty()) {
+        const auto body = glass.underlay.bounds.scaled(scale).translated(exactLens.topLeft());
+        const auto quad = body.toEnclosingRect().intersected(bounds);
+        if (!quad.isEmpty() && scissor.intersects(target.framebufferRect(quad))) {
+            // Composite the soft veil before the mask, across visual gaps as
+            // well as behind tiles. Like the lenses, it reads the original
+            // captured scene rather than recursively blurring this draw.
+            glUniform1f(program.uniform("uSoftBackdrop"), 1.0f);
+            drawLens(quad, body, 0, -1, glass.underlay.opacity);
+            glUniform1f(program.uniform("uSoftBackdrop"), 0.0f);
+        }
+    }
     if (glass.enabled && shaped && !glass.lenses.empty()) {
         // All pieces sample the same backdrop, not their already-shaded neighbours.
         // The union mask also clips the scrolling grid without moving the lenses.

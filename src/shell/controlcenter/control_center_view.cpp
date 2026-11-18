@@ -1019,6 +1019,14 @@ void ControlCenterView::layout()
         onGlassChanged();
 }
 
+render::GlassUnderlay ControlCenterView::glassUnderlay() const
+{
+    // The catalog has its own material. The soft veil follows only the active
+    // grid (and the gaps between controls), including while editing a page.
+    const double x = std::max(0., canvasX() - 2);
+    return {{x, 0, canvasWidth() + canvasX() - x, localRect().height}, .86f};
+}
+
 ui::Path ControlCenterView::glassShape() const
 {
     ui::Path mask;

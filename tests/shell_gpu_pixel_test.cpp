@@ -113,9 +113,14 @@ protected:
             compositor.updateTextures(*renderer);
             for (shell::ShellWindow *window : shell->windows()) {
                 scene::SurfaceNode *node = window->surface()->node();
-                if (node->texture())
-                    renderer->drawTextureMapped(node->texture(), window->drawnBounds(), 1.0f,
-                                                base::AffineTransform());
+                if (!node->texture())
+                    continue;
+                const auto bounds = window->drawnBounds();
+                if (node->hasBackgroundBlur())
+                    renderer->drawBackgroundBlur(node->backgroundBlurRect().translated(bounds.topLeft()),
+                            node->backgroundBlurRadius(), bounds, node->glass(),
+                            node->backgroundBlurShape().translated(bounds.x(), bounds.y()));
+                renderer->drawTextureMapped(node->texture(), bounds, 1.0f, base::AffineTransform());
             }
         });
         renderer->cancelFrame();
@@ -143,6 +148,92 @@ protected:
 };
 
 } // namespace
+
+TEST_P(ShellGpuPixels, GlassUnderlaySoftensGapsWithoutPaintingASolidPlate)
+{
+    class SplitBackdrop : public ui::View {
+        void paint(ui::Painter &painter) override
+        {
+            painter.fillRect(localRect(), ui::Color::rgb(0x0000ff));
+            painter.fillRect({0, 0, localRect().width / 2, localRect().height}, ui::Color::rgb(0xff0000));
+        }
+    };
+    shell::ShellWindow wallpaper(shell.get(), wm::WindowRole::Desktop, false);
+    wallpaper.setContentView(std::make_unique<SplitBackdrop>());
+    wallpaper.setGeometry(kOutput);
+    wallpaper.show();
+
+    shell::ShellWindow panel(shell.get(), wm::WindowRole::Panel, false);
+    panel.window()->setBackgroundColor(ui::ColorRecipe(ui::Color::rgb(0).withAlpha(0)));
+    panel.setContentView(std::make_unique<ui::View>());
+    panel.setGeometry({100, 10, 200, 180});
+    ui::Path mask;
+    mask.addRoundedRect({26, 40, 46, 100}, 12, 12);
+    GlassParams material;
+    material.enabled = true;
+    material.blurSigma = 7.5f;
+    material.lenses.push_back({{26, 40, 46, 100}, 12});
+    panel.setBackgroundBlur({0, 0, 200, 180}, 12, material, mask);
+    panel.show();
+
+    const auto before = frame();
+    EXPECT_EQ(0xffff0000u, pixelAt(before, {191, 100}));
+    EXPECT_EQ(0xff0000ffu, pixelAt(before, {208, 100}));
+    material.underlay = {{0, 0, 200, 180}, .86f};
+    panel.setBackgroundBlur({0, 0, 200, 180}, 12, material, mask);
+    const auto after = frame();
+    EXPECT_EQ(0xffff0000u, pixelAt(after, {80, 100}));
+    EXPECT_EQ(0xff0000ffu, pixelAt(after, {320, 100}));
+    EXPECT_EQ(pixelAt(before, {148, 100}), pixelAt(after, {148, 100})); // the lens still reads the same scene
+    EXPECT_GT(pixelAt(after, {191, 100}) & 0xff, 20u);
+    EXPECT_GT((pixelAt(after, {208, 100}) >> 16) & 0xff, 20u);
+    EXPECT_EQ(0u, (pixelAt(after, {191, 100}) >> 8) & 0xff); // no tinted fill
+    EXPECT_EQ(0xffu, pixelAt(after, {191, 100}) >> 24);
+    EXPECT_NEAR(255, (pixelAt(after, {101, 100}) >> 16) & 0xff, 3);
+}
+
+TEST_P(ShellGpuPixels, GlassCrestReflectsTheBackdropOnDarkAndColoredScenes)
+{
+    shell::ShellWindow wallpaper(shell.get(), wm::WindowRole::Desktop, false);
+    auto fill = std::make_unique<Fill>(ui::Color::rgb(0x080808));
+    auto *color = fill.get();
+    wallpaper.setContentView(std::move(fill));
+    wallpaper.setGeometry(kOutput);
+    wallpaper.show();
+
+    shell::ShellWindow panel(shell.get(), wm::WindowRole::Panel, false);
+    panel.window()->setBackgroundColor(ui::ColorRecipe(ui::Color::rgb(0).withAlpha(0)));
+    panel.setContentView(std::make_unique<ui::View>());
+    panel.setGeometry({100, 40, 200, 120});
+    ui::Path mask;
+    mask.addRoundedRect({0, 0, 200, 120}, 30, 30);
+    GlassParams material;
+    material.enabled = true;
+    material.blurSigma = 7.5f;
+    material.rim = .94f;
+    material.backdropReflection = 1;
+    material.tintAlpha = .024f;
+    panel.setBackgroundBlur({0, 0, 200, 120}, 30, material, mask);
+    panel.show();
+
+    const auto rgb = [](uint32_t pixel) {
+        return std::array<int, 3>{int((pixel >> 16) & 255), int((pixel >> 8) & 255), int(pixel & 255)};
+    };
+    const auto gray = frame();
+    const auto neutral = rgb(pixelAt(gray, {200, 41}));
+    const auto body = rgb(pixelAt(gray, {200, 45}));
+    EXPECT_GT(neutral[0], body[0] + 18);
+    EXPECT_EQ(neutral[0], neutral[1]);
+    EXPECT_EQ(neutral[1], neutral[2]);
+    EXPECT_EQ(0xff080808u, pixelAt(gray, {200, 38}));
+
+    color->setColor(ui::Color::rgb(0x102060));
+    const auto blue = rgb(pixelAt(frame(), {200, 41}));
+    EXPECT_GT(blue[2], blue[0] + 24);
+    color->setColor(ui::Color::rgb(0x602010));
+    const auto red = rgb(pixelAt(frame(), {200, 41}));
+    EXPECT_GT(red[0], red[2] + 24);
+}
 
 TEST_P(ShellGpuPixels, WindowsRenderOnTheGpuInOnePassAndOnlyWhatChanged)
 {

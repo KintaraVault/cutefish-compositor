@@ -988,6 +988,9 @@ void WindowAnimation::drawPresentedBlurs(render::Renderer &renderer, const Sampl
                                    lens.bounds.width() * sx, lens.bounds.height() * sy};
                     lens.radius *= scale;
                 }
+                auto &underlay = glass.underlay.bounds;
+                underlay = {underlay.x() * sx, underlay.y() * sy,
+                            underlay.width() * sx, underlay.height() * sy};
                 const ui::Path &shape = surface->backgroundBlurShape();
                 renderer.drawBackgroundBlur(
                         transform.mapRect(base::RectF(surface->backgroundBlurRect().translated(

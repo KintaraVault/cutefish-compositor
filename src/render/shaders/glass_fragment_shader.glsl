@@ -20,6 +20,7 @@ uniform float uSaturation;
 uniform vec2 uRim;
 uniform float uRimWrap;
 uniform float uBackdropReflection;
+uniform float uSoftBackdrop;
 uniform vec4 uTint;
 uniform vec2 uTone;
 // The lens within the quad, in device pixels; a client shape masks the quad.
@@ -97,10 +98,32 @@ float luminance(vec3 rgb) {
     return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
 }
 
+vec3 scatteringRow(vec2 uv, vec2 dx, vec2 margin) {
+    return 0.35 * (backdrop(clamp(uv - dx, margin, 1.0 - margin))
+                 + backdrop(clamp(uv + dx, margin, 1.0 - margin)))
+         + 0.15 * (backdrop(clamp(uv - 3.0 * dx, margin, 1.0 - margin))
+                 + backdrop(clamp(uv + 3.0 * dx, margin, 1.0 - margin)));
+}
+
+vec4 softBackdrop(vec2 position, vec2 uv, vec2 margin) {
+    // Wider scattering of the same Gaussian-filtered backdrop as the lenses.
+    vec2 stepUv = 10.0 * uRim.y / uCoverage;
+    vec2 dx = vec2(stepUv.x, 0.0);
+    vec2 dy = vec2(0.0, stepUv.y);
+    vec3 color = 0.35 * (scatteringRow(uv - dy, dx, margin) + scatteringRow(uv + dy, dx, margin))
+               + 0.15 * (scatteringRow(uv - 3.0 * dy, dx, margin) + scatteringRow(uv + 3.0 * dy, dx, margin));
+    vec2 pos = position / uRim.y;
+    vec2 remaining = (uLens.zw - position) / uRim.y;
+    float horizontal = smoothstep(0.0, 68.0, pos.x) * smoothstep(0.0, 20.0, remaining.x);
+    float vertical = smoothstep(0.0, 52.0, pos.y) * smoothstep(0.0, 65.0, remaining.y);
+    float dim = mix(0.16, 0.31, smoothstep(0.20, 0.85, luminance(color)));
+    return vec4(color * (1.0 - dim), 1.0) * (horizontal * vertical * uOpacity);
+}
+
 vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
                   float sd, float band, vec2 margin) {
     float pixel = uRim.y;
-    float d = max(-sd, 0.0);
+    float d = -sd;
     vec2 tap = outward / uCoverage;
     vec2 tangent = vec2(-tap.y, tap.x);
     // The lip reflects a small patch outside the outline. The footprint fans
@@ -112,21 +135,23 @@ vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
     environment += 0.25 * backdrop(clamp(ray - tangent * band * 0.55, margin, 1.0 - margin));
     vec3 local = backdrop(clamp(uv, margin, 1.0 - margin));
     float fresnel = pow(1.0 - clamp(normal.z, 0.0, 1.0), 2.0);
-    float lip = smoothstep(-0.35, pixel * 0.62, d) * (1.0 - smoothstep(pixel * 1.18, pixel * 2.65, d));
-    float shoulder = exp(-d / max(pixel, band * 0.48));
+    // Integrate the subpixel crest; the path separately masks the silhouette.
+    float crestStart = 0.18 * pixel;
+    float crestEnd = 1.57 * pixel;
+    float lip = clamp(min(d + 0.5, crestEnd) - max(d - 0.5, crestStart), 0.0, 1.0);
+    float shoulder = exp(-max(d - crestEnd, 0.0) / max(pixel, band * 0.32));
     float ambient = luminance(environment);
     float contrast = clamp(0.65 + 1.4 * (ambient - luminance(local)), 0.30, 1.0);
     float weight = uRim.x * uBackdropReflection;
-    // Colour of both the reflection and the thin transmission caustic comes
-    // from the capture. An unlit rim can darken rather than gaining white ink.
-    vec3 color = mix(transmission, environment, weight * (0.46 * lip + 0.40 * fresnel * shoulder));
-    vec3 caustic = pow(max(environment, vec3(0.0)), vec3(0.38));
-    // Lens gain is greater on the shoulder facing the incident field, but
-    // its magnitude and spectrum are still taken from the scene.
-    float direction = 0.73 + 0.27 * abs(dot(outward, normalize(uLight.xy)));
-    color += caustic * (weight * contrast * direction * (0.90 * lip + 0.16 * shoulder)) * (1.0 - color);
-    float silhouette = 1.0 - smoothstep(0.15 * pixel, 1.25 * pixel, d);
-    return color * (1.0 - weight * silhouette * mix(0.12, 0.27, ambient));
+    // Two broad incident lights sweep along the curvature. The backdrop
+    // supplies the hue; neutral incident light prevents a black-level cutoff.
+    float key = 0.28 + 0.72 * pow(abs(dot(outward, normalize(uLight.xy))), 1.65);
+    float bright = smoothstep(0.30, 0.9, ambient);
+    vec3 color = mix(transmission, environment, weight * (0.12 * lip + 0.25 * fresnel * shoulder));
+    vec3 caustic = sqrt(max(environment, vec3(0.0))) * 0.69 + (1.0 - bright) * 0.31;
+    color += caustic * (weight * contrast * (1.60 * key * lip + 0.105 * shoulder)) * (1.0 - color);
+    float silhouette = 1.0 - smoothstep(-0.25 * pixel, 0.62 * pixel, d);
+    return clamp(color * (1.0 - weight * silhouette * mix(0.13, 0.44, ambient)), 0.0, 1.0);
 }
 
 // Sample each ray before averaging: averaging offsets loses the pixel footprint
@@ -149,18 +174,22 @@ vec3 refractedAt(vec2 p, vec2 offset, vec2 halfSize, float r, float band,
 void shade() {
     vec2 halfSize = uLens.zw * 0.5;
     vec2 p = vTexCoord * uSize - uLens.xy - halfSize;
+    vec2 uv = uSampleRect.xy + vTexCoord * uSampleRect.zw;
+    // Bilinear filtering must not reach past what was captured.
+    vec2 margin = 1.2 / uBackdropSize;
+    if (uSoftBackdrop > 0.0) {
+        gl_FragColor = softBackdrop(p + halfSize, uv, margin);
+        return;
+    }
     float r = clamp(uRadius, 0.0, min(halfSize.x, halfSize.y));
     float sd = roundRect(p, halfSize, r);
     // The roll-off band is bounded so the glass cannot keep curving towards the
     // middle of a large surface.
     float band = clamp(uBevel > 0.0 ? uBevel : r, 1.0, min(halfSize.x, halfSize.y));
 
-    vec2 uv = uSampleRect.xy + vTexCoord * uSampleRect.zw;
     // Over the lip the offset changes so fast that neighbouring pixels read far
     // apart in the backdrop, so widen the sampling footprint there.
     vec2 texel = mix(0.75, 2.5, clamp(1.0 + sd / band, 0.0, 1.0)) / uCoverage;
-    // Bilinear filtering must not reach past what was captured.
-    vec2 margin = 1.2 / uBackdropSize;
     vec3 refracted = 0.25 * (
         refractedAt(p, vec2(0.375, -0.125), halfSize, r, band, uv, texel, margin) +
         refractedAt(p, vec2(0.125, 0.375), halfSize, r, band, uv, texel, margin) +

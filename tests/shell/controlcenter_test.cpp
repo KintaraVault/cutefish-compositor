@@ -457,6 +457,8 @@ TEST_F(ControlCenterTest, TheControlCentreHangsBelowTheBarWithThePanelGlass)
     EXPECT_GT(bounds.height(), 400);
     EXPECT_TRUE(window->surface()->glass().enabled);
     EXPECT_GE(window->surface()->glass().lenses.size(), 18u);
+    EXPECT_GT(window->surface()->glass().underlay.opacity, 0);
+    EXPECT_TRUE(window->surface()->glass().underlay.bounds.contains({187, 30}));
     EXPECT_EQ(base::Rect(0, 0, 382, bounds.height()), window->surface()->backgroundBlurRect());
     EXPECT_EQ(16, window->surface()->backgroundBlurRadius());
     const auto mask = window->surface()->backgroundBlurShape();

@@ -23,6 +23,15 @@ struct GlassLens {
     bool operator==(const GlassLens &) const = default;
 };
 
+// Soft, non-interactive backdrop beneath a group of lenses. Logical pixels
+// relative to the same blur rectangle as the lenses, with no outline or fill.
+struct GlassUnderlay {
+    base::RectF bounds;
+    float opacity = 0;
+
+    bool operator==(const GlassUnderlay &) const = default;
+};
+
 // The glass effect material. The backdrop is softened, refracted through
 // a rounded superellipse lens, tinted, then lit. Lengths are logical pixels and
 // angles are degrees; the lens roll-off band is the corner radius of the blur
@@ -104,6 +113,7 @@ struct GlassParams {
     bool ignoresOpaqueBackdrop = false;
     // Internal shell geometry; not sent over the Wayland glass protocol.
     std::vector<GlassLens> lenses;
+    GlassUnderlay underlay;
 };
 
 // How a plain blur's fill colour blends over the tinted backdrop, as the
@@ -144,7 +154,7 @@ inline bool operator==(const GlassParams &a, const GlassParams &b)
             && a.shadowLift == b.shadowLift && a.highlightRollOff == b.highlightRollOff
             && a.opacity == b.opacity && a.plainSigma == b.plainSigma && a.fillMode == b.fillMode
             && a.ignoresOpaqueBackdrop == b.ignoresOpaqueBackdrop
-            && a.lenses == b.lenses
+            && a.lenses == b.lenses && a.underlay == b.underlay
             && std::equal(a.fillTint, a.fillTint + 4, b.fillTint)
             && std::equal(a.fillColor, a.fillColor + 4, b.fillColor);
 }

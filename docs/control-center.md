@@ -29,7 +29,8 @@ Pages, control positions and visibility preferences are stored in
 directory.
 
 The interface uses the compositor's native glass. Each tile refracts the same
-backdrop independently; the gaps between tiles show the unfiltered wallpaper.
+captured scene independently. A wider, softly feathered blur below the grid
+remains visible between tiles without a solid panel or a second outline.
 The center, catalog and desktop widgets use separate neutral material settings,
 so the wallpaper supplies their hue. Animations approximate the supplied footage,
 which does not specify easing curves or durations.
