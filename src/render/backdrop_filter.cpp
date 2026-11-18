@@ -226,6 +226,7 @@ void BackdropFilter::applyGlassMaterial(const GlProgram &program, const GlassPar
     glUniform2f(uniform("uRim"), std::clamp(glass.rim, 0.0f, 1.0f), std::max(1.0f, float(scale)));
     glUniform1f(uniform("uRimWrap"), std::clamp(glass.rimWrap, 0.0f, 1.0f));
     glUniform1f(uniform("uBackdropReflection"), std::clamp(glass.backdropReflection, 0.0f, 1.0f));
+    glUniform1f(uniform("uRimSpread"), std::clamp(glass.rimSpread, 0.0f, 1.0f));
     glUniform1f(uniform("uSoftBackdrop"), 0.0f);
 }
 

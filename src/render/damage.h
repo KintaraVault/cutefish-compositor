@@ -54,10 +54,16 @@ inline BackdropReach backdropReach(const GlassParams &glass, double scale)
     // the result linearly, glass at up to a texel off its ray, and the lens
     // bends that ray by up to 1 / 0.45 of its displacement, more by the chroma.
     const double texel = 1 / (backdropQuality(glass, scale) * scale);
-    const double bend = glass.enabled
+    double reach = glass.enabled
             ? glass.displacement / 0.45 * (1 + std::clamp(glass.chroma, 0.0f, 1.0f))
             : 0;
-    return {int(std::ceil((kGaussianMaxReach + 5) * texel + bend)),
+    if (glass.enabled && glass.underlay.opacity > 0)
+        reach = std::max(reach, 30.0); // softBackdrop's outermost tap
+    if (glass.enabled && std::ranges::any_of(glass.lenses, [](const GlassLens &lens) {
+            return lens.finish != GlassFinish::Lens;
+        }))
+        reach = std::max(reach, 50.0 + glass.displacement * (0.24 / 0.45));
+    return {int(std::ceil((kGaussianMaxReach + 5) * texel + reach)),
             int(std::ceil((2 * kGaussianMaxReach + 4) * texel))};
 }
 

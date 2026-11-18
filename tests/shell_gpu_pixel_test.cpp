@@ -305,6 +305,63 @@ TEST_P(ShellGpuPixels, GlassCrestReflectsTheBackdropOnDarkAndColoredScenes)
     EXPECT_GT(red[0], red[2] + 24);
 }
 
+TEST_P(ShellGpuPixels, ClearLensKeepsBackdropDetailWithoutABroadRimGlow)
+{
+    class DetailedBackdrop : public ui::View {
+        void paint(ui::Painter &painter) override
+        {
+            painter.fillRect(localRect(), ui::Color::rgb(0x252525));
+            for (int x = 146; x < 262; x += 12)
+                painter.fillRect({double(x), 85, 6, 60}, ui::Color::rgb(0xaaaaaa));
+        }
+    };
+    shell::ShellWindow wallpaper(shell.get(), wm::WindowRole::Desktop, false);
+    wallpaper.setContentView(std::make_unique<DetailedBackdrop>());
+    wallpaper.setGeometry(kOutput);
+    wallpaper.show();
+
+    shell::ShellWindow panel(shell.get(), wm::WindowRole::Panel, false);
+    panel.window()->setBackgroundColor(ui::ColorRecipe(ui::Color::rgb(0).withAlpha(0)));
+    panel.setContentView(std::make_unique<ui::View>());
+    panel.setGeometry({100, 40, 200, 120});
+    ui::Path mask;
+    mask.addRoundedRect({0, 0, 200, 120}, 24, 24);
+    GlassParams material;
+    material.enabled = true;
+    material.blurSigma = 7.5f;
+    material.tintAlpha = 0;
+    material.bevel = 8;
+    material.depth = 8;
+    material.displacement = 10;
+    material.rim = .78f;
+    material.lightAngle = 237;
+    material.backdropReflection = 1;
+    const auto draw = [&] {
+        panel.setBackgroundBlur({0, 0, 200, 120}, 24, material, mask);
+        return frame();
+    };
+    panel.show();
+    const auto blurred = draw();
+    material.blurSigma = 2.4f;
+    const auto wide = draw();
+    material.rimSpread = .45f;
+    const auto clear = draw();
+
+    const auto gray = [&](const ui::Bitmap &image, int x, int y) {
+        return int(pixelAt(image, {x, y}) & 255);
+    };
+    const auto detail = [&](const ui::Bitmap &image) {
+        return gray(image, 197, 112) - gray(image, 203, 112);
+    };
+    EXPECT_GT(detail(clear), detail(blurred) + 38);
+    EXPECT_LT(gray(clear, 190, 44), gray(wide, 190, 44));
+    int crest = 0;
+    for (int y = base::roundToInt(40 * scale()); y < base::roundToInt(42 * scale()); ++y)
+        crest = std::max(crest, int(clear.constScanLine(y)[4 * base::roundToInt(190 * scale())]));
+    EXPECT_GT(crest, gray(clear, 190, 48) + 12);
+    EXPECT_EQ(gray(wide, 190, 73), gray(clear, 190, 73));
+}
+
 TEST_P(ShellGpuPixels, NestedLensRoundsItsCornersAndClipsToItsViewport)
 {
     shell::ShellWindow wallpaper(shell.get(), wm::WindowRole::Desktop, false);

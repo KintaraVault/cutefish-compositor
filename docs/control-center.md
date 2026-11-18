@@ -40,7 +40,9 @@ Pages, control positions and visibility preferences are stored in
 directory.
 
 The interface uses the compositor's native glass. Each tile refracts the same
-captured scene independently. A wider, softly feathered blur below the grid
+captured scene independently. Live tiles use a light optical blur and a tight
+reflected crest so small details survive through the tile body. A wider,
+softly feathered blur below the grid
 remains visible between tiles without a solid panel or a second outline.
 The rim uses a pixel footprint aligned with the curve, with separate reflected
 and transmitted highlights to keep a smooth edge at fractional output scales.

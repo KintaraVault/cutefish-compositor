@@ -97,6 +97,8 @@ struct GlassParams {
     float rimWrap = 0.0f; // minimum highlight around the sides of a lens
     // Shell glass can reflect the surrounding scene instead of a fixed rim light.
     float backdropReflection = 0.0f;
+    // Width of the reflected glow inside the crest, relative to the bevel.
+    float rimSpread = 1.0f;
     float tintRed = 1.0f;
     float tintGreen = 1.0f;
     float tintBlue = 1.0f;
@@ -156,7 +158,7 @@ inline bool operator==(const GlassParams &a, const GlassParams &b)
             && a.ambientOcclusion == b.ambientOcclusion
             && a.ambientOcclusionRadius == b.ambientOcclusionRadius
             && a.saturation == b.saturation && a.rim == b.rim && a.rimWrap == b.rimWrap
-            && a.backdropReflection == b.backdropReflection
+            && a.backdropReflection == b.backdropReflection && a.rimSpread == b.rimSpread
             && a.tintRed == b.tintRed
             && a.tintGreen == b.tintGreen && a.tintBlue == b.tintBlue && a.tintAlpha == b.tintAlpha
             && a.shadowLift == b.shadowLift && a.highlightRollOff == b.highlightRollOff

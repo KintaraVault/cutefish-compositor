@@ -529,17 +529,21 @@ void ControlCenter::updateWindow(Panel panel)
         managed->setPopupAboveDock(open.controlCenter->editing());
     if (open.pager && !open.pager->detailPage()) {
         shape = open.controlCenter->glassShape();
-        material = popupGlass(1, 1, 1, .024);
-        material.blurSigma = 7.5f;
-        material.saturation = 1.48f;
-        material.shadowLift = .12f;
-        material.highlightRollOff = .49f;
+        const float edit = float(open.controlCenter->editorProgress());
+        // Transmit detail through the live lenses instead of lifting their
+        // whole body. The editor retains its diffuser and reveal transition.
+        material = popupGlass(1, 1, 1, std::lerp(.009f, .024f, edit));
+        material.blurSigma = std::lerp(2.4f, 7.5f, edit);
+        material.saturation = std::lerp(1.17f, 1.48f, edit);
+        material.shadowLift = std::lerp(.042f, .12f, edit);
+        material.highlightRollOff = std::lerp(.36f, .49f, edit);
         material.bevel = 8;
         material.depth = 8;
         material.displacement = 10;
         material.chroma = .015f;
         material.lightAngle = 237;
-        material.rim = .94f;
+        material.rim = std::lerp(.78f, .94f, edit);
+        material.rimSpread = std::lerp(.45f, 1.f, edit);
         material.backdropReflection = 1.f;
         material.lenses = open.controlCenter->glassLenses();
         material.underlay = open.controlCenter->glassUnderlay();

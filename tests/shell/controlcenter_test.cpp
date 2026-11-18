@@ -509,10 +509,13 @@ TEST_F(ControlCenterTest, TheControlCentreHangsBelowTheBarWithThePanelGlass)
     EXPECT_EQ(342, width);
     EXPECT_EQ(base::Rect(1440 - width - 12, 38, width, bounds.height()), bounds);
     EXPECT_GT(bounds.height(), 400);
-    EXPECT_TRUE(window->surface()->glass().enabled);
-    EXPECT_GE(window->surface()->glass().lenses.size(), 18u);
-    EXPECT_GT(window->surface()->glass().underlay.opacity, 0);
-    EXPECT_TRUE(window->surface()->glass().underlay.bounds.contains({width / 2., 30}));
+    const auto &glass = window->surface()->glass();
+    EXPECT_TRUE(glass.enabled);
+    EXPECT_GE(glass.lenses.size(), 18u);
+    EXPECT_LT(glass.blurSigma, 3.f);
+    EXPECT_LT(glass.rimSpread, .5f);
+    EXPECT_GT(glass.underlay.opacity, 0);
+    EXPECT_TRUE(glass.underlay.bounds.contains({width / 2., 30}));
     EXPECT_EQ(base::Rect(0, 0, width, bounds.height()), window->surface()->backgroundBlurRect());
     EXPECT_EQ(16, window->surface()->backgroundBlurRadius());
     const auto mask = window->surface()->backgroundBlurShape();

@@ -1282,7 +1282,8 @@ render::GlassUnderlay ControlCenterView::glassUnderlay() const
     // The catalog has its own glass. The veil follows the canvas horizontally
     // but keeps the compact panel's height, not the expanded editor viewport.
     const double x = std::max(0., canvasX() - 2);
-    return {{x, 0, canvasWidth() + canvasX() - x, liveHeight()}, .86f};
+    return {{x, 0, canvasWidth() + canvasX() - x, liveHeight()},
+            std::lerp(.69f, .86f, float(editorProgress()))};
 }
 
 ui::Path ControlCenterView::glassShape() const

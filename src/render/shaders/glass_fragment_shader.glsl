@@ -20,6 +20,7 @@ uniform float uSaturation;
 uniform vec2 uRim;
 uniform float uRimWrap;
 uniform float uBackdropReflection;
+uniform float uRimSpread;
 uniform float uSoftBackdrop;
 uniform vec4 uTint;
 uniform vec2 uTone;
@@ -158,8 +159,9 @@ vec3 reflectedRim(vec3 transmission, vec2 uv, vec2 outward, vec3 normal,
     float crestStart = mix(0.40, 0.10, key) * pixel;
     float crestEnd = crestStart + mix(0.68, 1.05, max(key, bounce)) * pixel;
     float lip = rimBand(d, crestStart, crestEnd, outward);
-    float shoulder = smoothstep(crestStart - .5, crestEnd, d)
-                   * exp(-max(d - crestEnd, 0.0) / max(pixel, band * (0.25 + .18 * key)));
+    float spread = max(pixel * 0.5, uRimSpread * max(pixel, band * (0.25 + .18 * key)));
+    float shoulder = uRimSpread * smoothstep(crestStart - .5, crestEnd, d)
+                   * exp(-max(d - crestEnd, 0.0) / spread);
     float ambient = luminance(environment);
     float contrast = clamp(0.65 + 1.4 * (ambient - luminance(local)), 0.30, 1.0);
     float weight = uRim.x * uBackdropReflection;
