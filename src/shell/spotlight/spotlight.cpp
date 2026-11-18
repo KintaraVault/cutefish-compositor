@@ -39,7 +39,9 @@ private:
 Spotlight::Spotlight(Shell *shell, Dock *dock, std::unique_ptr<ClipboardHistory> clipboard, std::string settingsPath)
     : m_shell(shell)
     , m_clipboard(std::move(clipboard))
-    , m_window(std::make_unique<ShellWindow>(shell, wm::WindowRole::Picker))
+    // The WM's default Picker fade holds the opening bounds for its whole
+    // duration. Spotlight animates its own bounds and opacity instead.
+    , m_window(std::make_unique<ShellWindow>(shell, wm::WindowRole::Picker, /*animateVisibility=*/false))
 {
     auto view = std::make_unique<SpotlightView>(*shell, dock, *m_clipboard, std::move(settingsPath));
     m_view = view.get();

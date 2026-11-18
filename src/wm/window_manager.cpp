@@ -649,6 +649,10 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     // after windowAdded.
     if (const ShellWindowMetadata *metadata = shellMetadata(rootSurface)) {
         window->setRole(metadata->role);
+        if (!metadata->animateVisibility) {
+            if (auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node()))
+                animation->setStyle(scene::WindowAnimation::Style::None);
+        }
         window->setFocusPolicy(metadata->focusPolicy);
         window->setPanelBehavior(metadata->panelBehavior);
         window->setProtectedFromControl(metadata->protectedFromControl);

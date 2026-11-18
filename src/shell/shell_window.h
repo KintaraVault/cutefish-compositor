@@ -66,7 +66,8 @@ class ShellWindow : public wm::WindowObserver
 {
 public:
     // A toplevel of `role`, on no output in particular until setOutput().
-    ShellWindow(Shell *shell, wm::WindowRole role);
+    // Pass animateVisibility=false when the component owns its transitions.
+    ShellWindow(Shell *shell, wm::WindowRole role, bool animateVisibility = true);
     // Hosts `popup`, a popup the toolkit made with Window::createPopup()
     // whose popupParent() is `parent`'s window: placed by the compositor's
     // xdg positioner from its popupPlacement(), holding an xdg_popup grab

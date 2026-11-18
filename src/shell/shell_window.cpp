@@ -111,11 +111,12 @@ ShellWindow::ShellWindow(Shell *shell, ShellWindow *parent, ui::EmbeddedWindow *
     m_shell->addWindow(this);
 }
 
-ShellWindow::ShellWindow(Shell *shell, wm::WindowRole role)
+ShellWindow::ShellWindow(Shell *shell, wm::WindowRole role, bool animateVisibility)
     : ShellWindow(shell, nullptr, nullptr, role)
 {
     m_metadata.focusPolicy =
             role == wm::WindowRole::Osd ? wm::FocusPolicy::NoFocus : wm::FocusPolicy::Normal;
+    m_metadata.animateVisibility = animateVisibility;
     m_shellSurface->setToplevel();
     const std::shared_ptr<bool> alive = m_alive;
     m_shellSurface->setCloseCallback([this, alive] {

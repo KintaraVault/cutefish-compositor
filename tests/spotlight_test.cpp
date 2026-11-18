@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: BSD-3-Clause
+#include <array>
 #include <chrono>
 #include <cmath>
 
+#include <GLES3/gl3.h>
 #include <linux/input-event-codes.h>
 #include <gtest/gtest.h>
 
 #include "compositor/compositor.h"
 #include "compositor/surface.h"
 #include "cutefish/files/thumbnails/thumbnail_cache.h"
+#include "egl_test_util.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
@@ -20,6 +23,7 @@
 #include "shell/shell_test_util.h"
 #include "shell/shell_window.h"
 #include "temporary_directory.h"
+#include "toolkit/toolkit_host.h"
 #include "ui/embedded_window.h"
 #include "ui/scroller.h"
 #include "ui/text_field.h"
@@ -370,6 +374,66 @@ TEST_F(SpotlightWindowTest, DirectApplicationLauncherRevealsHeightWithoutMovingD
     }
     render(230);
     EXPECT_EQ(picker()->bounds().height(), 508);
+}
+
+TEST_F(SpotlightWindowTest, ApplicationRevealCompositesIntermediateHeights)
+{
+    auto gpu = render::EglRendererTestAccess::create();
+    ASSERT_TRUE(gpu);
+    const auto size = scene.size();
+    const EGLint attributes[] = {EGL_WIDTH, size.width(), EGL_HEIGHT, size.height(), EGL_NONE};
+    const EGLSurface pbuffer = eglCreatePbufferSurface(gpu->eglDisplay(), gpu->eglConfig(), attributes);
+    ASSERT_NE(pbuffer, EGL_NO_SURFACE);
+    render::EglRenderTarget target(gpu->eglDisplay(), pbuffer, nullptr, size);
+    render::TargetRetirement retire{gpu.get(), &target};
+    struct ReleasePanelGpu {
+        std::unique_ptr<shell::Shell> &desktop;
+        ~ReleasePanelGpu()
+        {
+            desktop.reset();
+            toolkit::PanelTexture(nullptr).releaseRenderResources();
+        }
+    } releasePanelGpu{desktop};
+
+    scene.setBackground({0.24f, 0.42f, 0.64f, 1.0f});
+    spotlight->show(shell::Spotlight::Mode::Applications);
+    ASSERT_NE(picker(), nullptr);
+    const auto entry = picker()->bounds();
+    const auto *panel = desktop->windows().front();
+    const auto context = render::OutputRenderContext{"spotlight", base::Rect(size), size, 1, 0};
+    const auto pixel = [&](int y) {
+        std::array<uint8_t, 4> value{};
+        glReadPixels(entry.x() + 20, size.height() - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, value.data());
+        return value;
+    };
+    int previous = entry.height();
+    for (int i = 0; i <= 7; ++i) {
+        SCOPED_TRACE(i);
+        frameClock += 33;
+        gpu->setOutputContext(context);
+        gpu->frameTime = frameClock;
+        EXPECT_TRUE(compositor.awaitsFrame(context.logicalViewport));
+        ASSERT_TRUE(gpu->beginFrame(&target));
+        compositor.updateTextures(*gpu);
+        scene.render(*gpu);
+        EXPECT_TRUE(panel->lastFrameOnGpu());
+        const auto bounds = picker()->bounds();
+        EXPECT_EQ(bounds.topLeft(), entry.topLeft());
+        // Screen pixels, not the logical bounds: the WM used to resize the
+        // latter while still drawing the opening snapshot at its first height.
+        const auto background = pixel(entry.y() - 4);
+        EXPECT_EQ(pixel(bounds.bottom() + 2), background);
+        if (i > 0) {
+            EXPECT_GT(bounds.height(), previous);
+            EXPECT_NE(pixel(bounds.bottom() - 7), background);
+        }
+        if (i < 7)
+            EXPECT_LT(bounds.height(), 508);
+        else
+            EXPECT_EQ(bounds.height(), 508);
+        previous = bounds.height();
+        gpu->cancelFrame();
+    }
 }
 
 TEST_F(SpotlightWindowTest, EmailEditsInlineAndBuildsAResultCard)
