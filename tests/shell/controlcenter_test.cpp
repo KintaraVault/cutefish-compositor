@@ -449,6 +449,12 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     capture("-warmup");
     test::runFor(std::chrono::milliseconds(390));
     capture("-edit");
+    key(KEY_ESC);
+    capture("-editor-exit-start");
+    test::runFor(std::chrono::milliseconds(125));
+    capture("-editor-exit-mid");
+    test::runFor(std::chrono::milliseconds(180));
+    capture("-editor-exit-end");
     center->closePanels();
     test::runFor(std::chrono::milliseconds(25));
     capture("-widgets");
@@ -473,17 +479,19 @@ TEST_F(ControlCenterTest, TheControlCentreHangsBelowTheBarWithThePanelGlass)
     EXPECT_TRUE(window->wmWindow()->isPopup());
     // Right of the screen it does not fit: the visible tiles stop 18 px from the edge.
     const base::Rect bounds = window->drawnBounds();
-    EXPECT_EQ(base::Rect(1440 - 263 - 12, 38, 263, bounds.height()), bounds);
+    constexpr int width = int(shell::ControlCenterView::kWidth);
+    EXPECT_EQ(342, width);
+    EXPECT_EQ(base::Rect(1440 - width - 12, 38, width, bounds.height()), bounds);
     EXPECT_GT(bounds.height(), 400);
     EXPECT_TRUE(window->surface()->glass().enabled);
     EXPECT_GE(window->surface()->glass().lenses.size(), 18u);
     EXPECT_GT(window->surface()->glass().underlay.opacity, 0);
-    EXPECT_TRUE(window->surface()->glass().underlay.bounds.contains({131, 30}));
-    EXPECT_EQ(base::Rect(0, 0, 263, bounds.height()), window->surface()->backgroundBlurRect());
+    EXPECT_TRUE(window->surface()->glass().underlay.bounds.contains({width / 2., 30}));
+    EXPECT_EQ(base::Rect(0, 0, width, bounds.height()), window->surface()->backgroundBlurRect());
     EXPECT_EQ(16, window->surface()->backgroundBlurRadius());
     const auto mask = window->surface()->backgroundBlurShape();
     EXPECT_TRUE(mask.contains({40, 30}));
-    EXPECT_FALSE(mask.contains({131, 30})); // no enclosing glass in the grid gutter
+    EXPECT_FALSE(mask.contains({width / 2., 30})); // no enclosing glass in the grid gutter
 
     // Escape closes it; the bar lends it the keyboard.
     key(KEY_ESC);
@@ -659,10 +667,9 @@ TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPa
     EXPECT_LT(pager->progress(), 1);
     EXPECT_GT(panel->opacity(), 0);
     EXPECT_LT(view->opacity(), 1);
-    // The window follows the pages frame by frame, narrowing to a status
-    // panel's width with its right edge kept.
-    EXPECT_GT(window->drawnBounds().width(), 263);
-    EXPECT_LT(window->drawnBounds().width(), 320);
+    // The window follows the pages frame by frame, keeping its right edge.
+    EXPECT_GT(window->drawnBounds().width(), 320);
+    EXPECT_LT(window->drawnBounds().width(), shell::ControlCenterView::kWidth);
     EXPECT_EQ(1440 - 12, window->drawnBounds().right());
     EXPECT_GT(window->drawnBounds().height(), std::min(mainHeight, int(std::lround(panel->shownBottom()))));
     EXPECT_LT(window->drawnBounds().height(), std::max(mainHeight, int(std::lround(panel->shownBottom()))));
@@ -688,7 +695,8 @@ TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPa
     EXPECT_EQ(nullptr, pager->detailPage());
     EXPECT_TRUE(view->isVisible());
     EXPECT_EQ(1, view->opacity());
-    EXPECT_EQ(base::Rect(1440 - 263 - 12, 38, 263, mainHeight), window->drawnBounds());
+    constexpr int width = int(shell::ControlCenterView::kWidth);
+    EXPECT_EQ(base::Rect(1440 - width - 12, 38, width, mainHeight), window->drawnBounds());
 
     // The audio output button sits beside its slider; the title also opens it.
     shell::TileSlider *sound = view->soundSlider();
@@ -1126,18 +1134,38 @@ TEST_F(ControlCenterTest, ControlCatalogRisesOverTheDockAndReachesTheScreenEdge)
     ASSERT_NE(nullptr, window->wmWindow());
     EXPECT_LT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
     const auto live = window->drawnBounds();
+    const auto getUnderlay = [&] { return window->surface()->glass().underlay.bounds; };
+    const auto liveUnderlay = getUnderlay();
+    EXPECT_EQ(live.height(), liveUnderlay.height());
+    const auto header = [&]() -> std::optional<render::GlassLens> {
+        const auto &lenses = window->surface()->glass().lenses;
+        const auto match = std::ranges::find_if(lenses, [](const auto &lens) {
+            return !lens.viewport && lens.radius == 22 && lens.bounds.height() == 44;
+        });
+        return match == lenses.end() ? std::nullopt : std::optional(*match);
+    };
+    EXPECT_FALSE(header());
     click(live.center().x(), live.bottom() - 24);
     ASSERT_TRUE(center->controlCenterView()->editing());
     const auto expanded = window->drawnBounds();
     EXPECT_EQ(kOutput.bottom(), expanded.bottom());
+    EXPECT_EQ(liveUnderlay.height(), getUnderlay().height());
     EXPECT_GT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
     EXPECT_FALSE(window->surface()->backgroundBlurShape().contains({30, 80}));
     frames(std::chrono::milliseconds(130));
+    ASSERT_TRUE(header());
+    EXPECT_GT(header()->opacity, 0);
+    EXPECT_LT(header()->opacity, 1);
     EXPECT_TRUE(window->surface()->backgroundBlurShape().contains({30, double(expanded.height() - 2)}));
     EXPECT_FALSE(window->surface()->backgroundBlurShape().contains({30, 80}));
     frames(std::chrono::milliseconds(260));
     const auto &mask = window->surface()->backgroundBlurShape();
     const auto &lenses = window->surface()->glass().lenses;
+    ASSERT_TRUE(header());
+    const auto settledHeader = *header();
+    EXPECT_EQ(1, settledHeader.opacity);
+    EXPECT_EQ(liveUnderlay.height(), getUnderlay().height());
+    EXPECT_GT(getUnderlay().x(), liveUnderlay.x());
     EXPECT_TRUE(std::ranges::any_of(lenses, [](const auto &lens) { return lens.viewport.has_value(); }));
     EXPECT_TRUE(mask.contains({30, 80}));
     EXPECT_TRUE(mask.contains({1, double(expanded.height() - 2)})); // no bottom corner above the dock
@@ -1146,9 +1174,16 @@ TEST_F(ControlCenterTest, ControlCatalogRisesOverTheDockAndReachesTheScreenEdge)
     move(overlap.center().x(), overlap.center().y());
     EXPECT_EQ(window->surface(), seat.pointerFocus());
     key(KEY_ESC);
-    frames(std::chrono::milliseconds(40));
+    frames(std::chrono::milliseconds(125));
+    ASSERT_TRUE(header());
+    EXPECT_GT(header()->opacity, 0);
+    EXPECT_LT(header()->opacity, settledHeader.opacity);
+    EXPECT_LT(header()->bounds.y(), settledHeader.bounds.y());
+    EXPECT_EQ(liveUnderlay.height(), getUnderlay().height());
     EXPECT_GT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
-    frames(std::chrono::milliseconds(260));
+    frames(std::chrono::milliseconds(180));
+    EXPECT_FALSE(header());
+    EXPECT_EQ(liveUnderlay, getUnderlay());
     EXPECT_EQ(live.bottom(), window->drawnBounds().bottom());
     EXPECT_LT(wm::layerFor(window->wmWindow()), wm::layerFor(testDock.wmWindow()));
 }

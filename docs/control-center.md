@@ -10,8 +10,10 @@ separate, input-transparent glass card that follows the pointer onto the desktop
 Open Control Center from the menu bar. **Edit Controls** opens a searchable
 catalog alongside the four-column grid. The catalog rises from the physical
 bottom edge and covers the dock; the live panel stays within the work area.
-The live grid uses a compact 263 logical pixel canvas. It glides next to the
-catalog and back; closing the panel fades the content and the glass together.
+The live grid uses a 342 logical pixel canvas. It glides next to the
+catalog and back without extending its soft backdrop down to the dock. The
+icon strip, empty cells and remove badges animate in and out with the editor.
+Closing the panel fades the content and the glass together.
 Click a preview or drag it into the grid to add it. Drag an existing control to
 move it; Escape cancels the drag. Left click runs a live control's primary
 action; right click opens its detail page where available.

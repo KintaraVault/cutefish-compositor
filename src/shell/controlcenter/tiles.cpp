@@ -237,7 +237,8 @@ ui::RectF CardItem::plateRect() const
 {
     const double padding = ui::Theme::current().largeSpacing;
     if (m_controlStyle) {
-        const double size = m_small ? 23 : 33;
+        const double row = m_large ? geometry().height / 2 : geometry().height;
+        const double size = std::clamp(row / 56., 1., 1.3) * (m_small ? 23 : 33);
         return {m_small ? (geometry().width - size) / 2 : 10,
                 m_small || !m_large ? (geometry().height - size) / 2 : 10, size, size};
     }
@@ -275,8 +276,9 @@ void CardItem::layout()
     updateIcon();
     const double padding = m_controlStyle ? 10 : theme.largeSpacing;
     const double height = geometry().height;
+    const double scale = std::clamp((m_large ? height / 2 : height) / 56., 1., 1.3);
     const ui::RectF slot = plateRect();
-    const double size = m_controlStyle ? (m_small ? 19 : 20) : kIconSize;
+    const double size = m_controlStyle ? scale * (m_small ? 19 : 20) : kIconSize;
     const ui::RectF icon {slot.x + (slot.width - size) / 2, slot.y + (slot.height - size) / 2, size, size};
     m_svg->setGeometry(icon);
     m_glyph->setSize(size);
@@ -285,12 +287,12 @@ void CardItem::layout()
     m_themeGlyph->setGeometry(icon);
     if (m_controlStyle) {
         m_title->setVisible(!m_small);
-        m_title->setFontSize(12);
+        m_title->setFontSize(std::round(12 * scale));
         m_title->setWeight(600);
         m_title->setColor(m_checked && m_large ? kLightArtwork : kWhite);
     }
 
-    m_status->setFontSize(m_controlStyle ? 10 : theme.smallFontSize());
+    m_status->setFontSize(m_controlStyle ? std::round(10 * scale) : theme.smallFontSize());
     m_status->setColor(m_controlStyle ? (m_checked && m_large ? kLightArtwork : kWhite).withAlpha(.75)
                                       : panel::secondaryTextColor());
     m_status->setVisible(!m_small && !m_status->text().empty());
@@ -613,6 +615,7 @@ void MediaTile::layout()
     if (m_controlStyle) {
         const double h = geometry().height;
         const double w = geometry().width;
+        const double scale = std::clamp(h / 121., 1., 1.3);
         const double cover = std::min(53.0, h * .29);
         const ui::RectF art {10, 10, cover, cover};
         m_cover->setOpacity(0);
@@ -620,16 +623,16 @@ void MediaTile::layout()
         m_art->setGeometry(art);
         m_art->setSourceSize({cover, cover});
         m_title->setWeight(650);
-        m_title->setFontSize(12);
+        m_title->setFontSize(std::round(12 * scale));
         m_title->setColor(kWhite);
-        m_title->setGeometry({10, h - (m_artist->text().empty() ? 53 : 64), w - 20, 18});
+        m_title->setGeometry({10, h - (m_artist->text().empty() ? 53 : 64) * scale, w - 20, 18 * scale});
         m_artist->setVisible(!m_artist->text().empty());
         m_artist->setColor(kWhite.withAlpha(.74));
-        m_artist->setFontSize(10);
-        m_artist->setGeometry({10, h - 46, w - 20, 14});
+        m_artist->setFontSize(std::round(10 * scale));
+        m_artist->setGeometry({10, h - 46 * scale, w - 20, 14 * scale});
         const double slot = std::min(34., w / 5);
         for (size_t i = 0; i < 3; ++i)
-            std::array {m_previous, m_play, m_next}[i]->setGeometry({w * (i + 1) / 4 - slot / 2, h - 19 - slot / 2, slot, slot});
+            std::array {m_previous, m_play, m_next}[i]->setGeometry({w * (i + 1) / 4 - slot / 2, h - 19 * scale - slot / 2, slot, slot});
         m_play->setOpacity(m_play->isEnabled() ? 1 : .68);
         return;
     }

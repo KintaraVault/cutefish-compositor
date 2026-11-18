@@ -29,6 +29,7 @@ constexpr double kTop = 12;
 constexpr double kCatalogGap = -1;
 constexpr double kFooter = 39;
 constexpr double kEditorHeader = 50;
+constexpr double kEditorHeaderHeight = 44;
 constexpr ui::Color kGreen {42, 157, 75, 255};
 constexpr auto kCanvasInk = ui::Color::rgb(0xffffff);
 constexpr auto kCatalogInk = ui::Color::rgb(0x171622);
@@ -199,20 +200,31 @@ protected:
             return;
         }
 
+        const double progress = v.editorProgress();
         painter.save();
         painter.clip(v.gridClip());
         for (int y = 0; y < v.rows(); ++y) {
+            // Follow the editor tween in both directions, with a short cascade
+            // from the first visible row rather than the start of a scrolled page.
+            const double row = std::clamp(y - std::floor(v.m_scroll / (v.cell() + v.gap())), 0., 7.);
+            const double delay = row * .027;
+            const double reveal = std::clamp((progress - delay) / (1 - delay), 0., 1.);
+            if (reveal == 0)
+                continue;
             for (int x = 0; x < controls::Layout::kColumns; ++x) {
                 if (std::ranges::any_of(v.page().tiles, [&](const Tile &tile) {
                         return tile.bounds().contains(base::Point(x, y));
                     }))
                     continue;
-                const auto rect = v.tileRect(Size::Small, {x, y});
-                painter.fillRoundedRect(rect, rect.height / 2, ink.withAlpha(.22));
+                const auto cell = v.tileRect(Size::Small, {x, y});
+                const auto rect = inset(cell, cell.width * .13 * (1 - reveal));
+                painter.fillRoundedRect(rect, rect.height / 2, ink.withAlpha(.22 * reveal));
             }
         }
+        painter.save();
+        painter.multiplyOpacity(progress);
         for (const Tile &tile : v.page().tiles) {
-            if (dragging && held && held->id == tile.id)
+            if (progress <= 0 || (dragging && held && held->id == tile.id))
                 continue;
             const auto minus = minusRect(tile);
             sign(painter, minus, false, contains(minus, hover) ? ui::Color::rgb(0xd8dcef) : ui::Color::rgb(0xbac0d8), kCatalogInk);
@@ -224,8 +236,12 @@ protected:
             painter.strokeRoundedRect(inset(r, 1), radius(r), accent, 2);
         }
         painter.restore();
+        painter.restore();
 
-        text(painter, {v.canvasX() + 13, kTop, 48, 44}, tr("Icon:"), 10, ink.withAlpha(.54));
+        const auto header = v.editorHeaderRect();
+        painter.save();
+        painter.multiplyOpacity(progress);
+        text(painter, {v.canvasX() + 13, header.y, 48, header.height}, tr("Icon:"), 10, ink.withAlpha(.54));
         for (size_t i = 0; i < controls::pageIcons().size(); ++i) {
             const auto r = iconRect(i);
             const bool checked = v.page().icon == controls::pageIcons()[i];
@@ -241,6 +257,7 @@ protected:
                 text(painter, r, std::to_string(i + 1), 8, ink, selected, true);
             }
         }
+        painter.restore();
         text(painter, footer, tr("Done"), 11, ink, true, true);
         visitGallery(&painter);
 
@@ -279,12 +296,12 @@ protected:
     void pointerPress(const ui::PointerEvent &event) override
     {
         hover = origin = event.position;
-        if (!editing)
+        if (!editing || !v.m_editTarget)
             return;
         if (event.button == ui::MouseButton::Right) {
             if (const Tile *tile = tileAt(hover)) {
                 showMenu(*tile);
-            } else if (v.m_page && contains({v.canvasX(), 0, v.canvasWidth(), kEditorHeader}, hover)) {
+            } else if (v.m_page && v.editorProgress() > 0 && contains(v.editorHeaderRect(), hover)) {
                 menu = std::make_unique<ui::Menu>();
                 menu->addItem(tr("Remove Page"), [this] {
                     v.m_model.removePage(v.m_page);
@@ -347,7 +364,7 @@ protected:
         const auto footer = editing ? v.editRect() : localRect();
         if (contains(footer, hover) && contains(footer, origin)) {
             v.edit(!editing);
-        } else if (editing) {
+        } else if (editing && v.m_editTarget) {
             if (held && held->id && contains(minusRect(*held), hover) && contains(minusRect(*held), origin)) {
                 v.removeTile(held->id);
             } else if (held && !held->id) {
@@ -433,7 +450,7 @@ private:
     ui::RectF iconRect(size_t i) const
     {
         const double width = (v.canvasWidth() - kInset * 2 - 61) / 5;
-        return {v.canvasX() + kInset + 61 + width * i + 3, kTop + 5, width - 8, 34};
+        return {v.canvasX() + kInset + 61 + width * i + 3, v.editorHeaderRect().y + 5, width - 8, 34};
     }
     ui::RectF pageRect(size_t i) const
     {
@@ -447,7 +464,8 @@ private:
         auto r = v.tileRect(tile.size, tile.cell);
         const auto pos = it->second->mapToWindow({0, 0});
         const auto top = mapToWindow({0, 0});
-        return {pos.x - top.x + (r.width == r.height ? 5 : 0), pos.y - top.y + 1, 22, 22};
+        return inset({pos.x - top.x + (r.width == r.height ? 5 : 0), pos.y - top.y + 1, 22, 22},
+                     5.28 * (1 - v.editorProgress()));
     }
     const Tile *tileAt(ui::PointF where) const
     {
@@ -780,22 +798,34 @@ double ControlCenterView::windowWidth() const { return canvasX() + canvasWidth()
 double ControlCenterView::gap() const { return std::round(canvasWidth() * .041); }
 double ControlCenterView::cell() const { return (canvasWidth() - 2 * kInset - 3 * gap()) / 4; }
 
-double ControlCenterView::gridTop() const
+double ControlCenterView::liveGridTop() const
 {
-    const double live = m_users->users().empty() ? 0 : m_users->sizeHint().height + 9;
-    return kTop + live + (kEditorHeader - live) * editorProgress();
+    return kTop + (m_users->users().empty() ? 0 : m_users->sizeHint().height + 9);
 }
+
+double ControlCenterView::gridTop() const { return std::lerp(liveGridTop(), kTop + kEditorHeader, editorProgress()); }
 
 int ControlCenterView::rows() const { return std::max(editing() ? 8 : 1, page().rows()); }
 double ControlCenterView::gridHeight() const { return rows() * (cell() + gap()) - gap(); }
 double ControlCenterView::gridViewport() const
 {
-    return std::max(cell(), std::min(gridHeight(), (editing() ? m_editorHeight : m_maximumHeight) - gridTop() - kFooter));
+    return gridViewport(rows(), gridTop(), editing() ? m_editorHeight : m_maximumHeight);
+}
+
+double ControlCenterView::gridViewport(int rows, double top, int maximumHeight) const
+{
+    return std::max(cell(), std::min(rows * (cell() + gap()) - gap(), maximumHeight - top - kFooter));
 }
 
 double ControlCenterView::windowHeight(double) const
 {
-    return std::ceil(editing() ? m_editorHeight : gridTop() + gridViewport() + kFooter);
+    return editing() ? m_editorHeight : liveHeight();
+}
+
+double ControlCenterView::liveHeight() const
+{
+    const auto top = liveGridTop();
+    return std::ceil(top + gridViewport(std::max(1, page().rows()), top, m_maximumHeight) + kFooter);
 }
 
 ui::RectF ControlCenterView::gridClip() const { return {canvasX(), gridTop(), canvasWidth(), gridViewport()}; }
@@ -814,6 +844,11 @@ ui::RectF ControlCenterView::catalogRect() const
     // The sheet rises from the output edge. Its bottom corners sit outside
     // the output, so the catalog never becomes a floating rounded window.
     return {0, 23 + height * (1 - m_catalogReveal), catalogWidth(), height + 32};
+}
+
+ui::RectF ControlCenterView::editorHeaderRect() const
+{
+    return {canvasX() + kInset, kTop - 9 * (1 - editorProgress()), canvasWidth() - 2 * kInset, kEditorHeaderHeight};
 }
 
 ui::RectF ControlCenterView::editRect() const
@@ -1134,10 +1169,10 @@ void ControlCenterView::layout()
 
 render::GlassUnderlay ControlCenterView::glassUnderlay() const
 {
-    // The catalog has its own material. The soft veil follows only the active
-    // grid (and the gaps between controls), including while editing a page.
+    // The catalog has its own glass. The veil follows the canvas horizontally
+    // but keeps the compact panel's height, not the expanded editor viewport.
     const double x = std::max(0., canvasX() - 2);
-    return {{x, 0, canvasWidth() + canvasX() - x, localRect().height}, .86f};
+    return {{x, 0, canvasWidth() + canvasX() - x, liveHeight()}, .86f};
 }
 
 ui::Path ControlCenterView::glassShape() const
@@ -1158,7 +1193,8 @@ ui::Path ControlCenterView::glassShape() const
         ui::Path viewport;
         viewport.addRect({0, 0, catalogWidth(), windowHeight(1)});
         mask.addPath(catalog.intersected(viewport));
-        mask.addRoundedRect({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 44}, 22, 22);
+        if (editorProgress() > 0)
+            mask.addRoundedRect(editorHeaderRect(), kEditorHeaderHeight / 2, kEditorHeaderHeight / 2);
     } else if (m_users->isVisible()) {
         mask.addRoundedRect(m_users->geometry(), 18, 18);
     }
@@ -1184,7 +1220,8 @@ std::vector<render::GlassLens> ControlCenterView::glassLenses() const
     if (editing()) {
         add(catalogRect(), 31, panel::dark() ? .72f : .48f, float(m_catalogReveal));
         pieces.insert(pieces.end(), m_chrome->previewLenses.begin(), m_chrome->previewLenses.end());
-        add({canvasX() + kInset, kTop, canvasWidth() - 2 * kInset, 44}, 22);
+        if (editorProgress() > 0)
+            add(editorHeaderRect(), kEditorHeaderHeight / 2, -1, float(editorProgress()));
     } else if (m_users->isVisible()) {
         add(m_users->geometry(), 18);
     }

@@ -31,7 +31,7 @@ class TileSlider;
 class ControlCenterView : public ui::View
 {
 public:
-    static constexpr double kWidth = 263;
+    static constexpr double kWidth = 342;
     struct State {
         bool available = false;
         bool active = false;
@@ -100,13 +100,17 @@ private:
     double canvasWidth() const;
     double catalogWidth() const;
     double gridTop() const;
+    double liveGridTop() const;
+    double liveHeight() const;
     double gridHeight() const;
     double gridViewport() const;
+    double gridViewport(int rows, double top, int maximumHeight) const;
     double canvasX() const;
     int rows() const;
     ui::RectF gridClip() const;
     ui::RectF tileRect(controls::Size size, base::Point cell) const;
     ui::RectF catalogRect() const;
+    ui::RectF editorHeaderRect() const;
     ui::RectF editRect() const;
     void scrollGrid(double delta);
     void removeTile(int id);
