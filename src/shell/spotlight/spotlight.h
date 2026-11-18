@@ -31,6 +31,7 @@ public:
     void registerServices();
 
 private:
+    class PanelMotion;
     void fit();
     void animateTo(base::Rect bounds, double opacity, double expanded, bool closing = false);
     void place(base::Rect bounds, double opacity, double expanded);
@@ -46,7 +47,7 @@ private:
     std::vector<base::Subscription> m_subscriptions;
     std::string m_output;
     base::Rect m_target;
-    std::unique_ptr<ui::Animation> m_motion;
+    std::unique_ptr<PanelMotion> m_motion;
     base::Timer m_retention;
     double m_opacity = 1;
     double m_expanded = 0;

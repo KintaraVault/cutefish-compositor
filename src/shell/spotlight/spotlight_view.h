@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -79,6 +80,7 @@ private:
         bool folder = false;
         std::string section = {};
         std::string quick = {};
+        std::string filePreview = {};
     };
     struct Tile {
         ui::RectF rect;
@@ -100,6 +102,21 @@ private:
         std::string source;
         std::string previewKey;
     };
+    enum Token { Message, Subject, Recipient, SearchTerms, SearchEngine };
+    struct PhrasePart {
+        std::string label;
+        ui::RectF rect;
+        int token;
+    };
+    struct ActionCard {
+        std::string title;
+        std::string detail;
+        std::string target;
+    };
+    struct Suggestion {
+        std::string label;
+        std::string value;
+    };
 
     bool grid() const { return m_mode == Mode::Applications && !m_list; }
     bool key(const ui::KeyEvent &event, Field *field);
@@ -117,6 +134,15 @@ private:
     void showAction(const Result &result, bool quick);
     void runAction();
     void exitAction();
+    void layoutAction(double width);
+    void focusToken(int token);
+    void actionFieldPressed(Field *field);
+    void updateSuggestions();
+    void chooseSuggestion(int index);
+    void actionEdited();
+    ui::RectF suggestionRect(int index, double width) const;
+    ui::RectF actionButton(double width, double height) const;
+    bool inlineAction() const { return m_action && !m_savingQuick; }
     void setFileFolder(std::string folder);
     void switchChip(int value);
     int hitResult(ui::PointF point) const;
@@ -134,6 +160,8 @@ private:
     void rememberApp(const std::string &id);
     void openTarget(const std::string &target);
     bool updateClipboardPreview(const Result &result, ResultIcon &icon);
+    bool updateFilePreview(const Result &result, ResultIcon &icon);
+    bool applyPreview(const std::string &key, const ui::Bitmap &bitmap, ResultIcon &icon);
 
     Shell &m_shell;
     Dock *m_dock;
@@ -161,6 +189,14 @@ private:
     base::Timer m_queryTimer;
     std::chrono::steady_clock::time_point m_indexed;
     std::optional<Result> m_action;
+    std::optional<ActionCard> m_actionCard;
+    std::vector<PhrasePart> m_phrase;
+    std::vector<Suggestion> m_suggestions;
+    double m_phraseBottom = kHeader;
+    int m_activeToken = -1;
+    int m_suggestionIndex = -1;
+    int m_engine = 0;
+    bool m_suggestionDismissed = false;
     std::string m_folder;
     std::string m_status;
     Mode m_mode = Mode::Search;
@@ -185,6 +221,9 @@ private:
     bool m_confirmClear = false;
     bool m_dragging = false;
     std::unordered_map<std::string, std::optional<ui::Bitmap>> m_thumbnails;
+    std::unordered_map<std::string, ui::Bitmap> m_fileThumbnails;
+    std::deque<std::string> m_fileThumbnailOrder;
+    std::vector<std::string> m_pendingThumbnails;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };
 

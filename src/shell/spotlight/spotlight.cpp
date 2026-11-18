@@ -17,6 +17,25 @@
 
 namespace cutefish::shell {
 
+class Spotlight::PanelMotion final : public ui::Animation
+{
+public:
+    using Animation::Animation;
+
+private:
+    void tick(uint64_t frameTimeNs) override
+    {
+        // Shell textures are shared by the outputs. A render from another
+        // output can supply an earlier sample; Animation uses unsigned elapsed time.
+        if (frameTimeNs <= m_lastFrame)
+            return;
+        m_lastFrame = frameTimeNs;
+        Animation::tick(frameTimeNs);
+    }
+
+    uint64_t m_lastFrame = 0;
+};
+
 Spotlight::Spotlight(Shell *shell, Dock *dock, std::unique_ptr<ClipboardHistory> clipboard, std::string settingsPath)
     : m_shell(shell)
     , m_clipboard(std::move(clipboard))
@@ -29,7 +48,7 @@ Spotlight::Spotlight(Shell *shell, Dock *dock, std::unique_ptr<ClipboardHistory>
     m_view->onPaint = [this] { applyGlass(); };
     m_window->setContentView(std::move(view));
     m_window->window()->setBackgroundColor(ui::Color{0, 0, 0, 0});
-    m_motion = std::make_unique<ui::Animation>(m_window->window());
+    m_motion = std::make_unique<PanelMotion>(m_window->window());
     m_motion->onFinished = [this] {
         if (m_closing)
             finishHide();
@@ -124,12 +143,14 @@ void Spotlight::show(Mode mode)
     if (m_target.isEmpty())
         return;
     if (opening) {
-        auto entry = m_target.translated(0, -7);
-        entry.setHeight(std::min(entry.height(), SpotlightView::kHeader + 36));
-        place(entry, 0, m_expanded);
+        auto entry = m_target;
+        entry.setHeight(std::min(entry.height(), SpotlightView::kHeader + 8));
+        place(entry, 0, m_targetExpanded);
+        // Dismissal emptied the input region even if the cached glass shape
+        // is the same as on the next show (especially the short search bar).
         m_window->setInputRegion(m_view->inputRegion(entry.width(), entry.height()));
         m_window->show();
-        animateTo(m_target, 1, m_expanded);
+        animateTo(m_target, 1, m_targetExpanded);
     } else if (reopening) {
         const auto size = m_window->size();
         m_window->setInputRegion(m_view->inputRegion(size.width(), size.height()));
@@ -155,9 +176,8 @@ void Spotlight::hide()
     m_view->stopScrolling();
     m_window->setInputRegion(base::Region());
     m_shell->windowManager()->clearKeyboardGrab(m_window->wmWindow());
-    // Do not resize the focused content on dismissal. Leave the same glass
-    // silhouette in place as it lifts and fades, without intercepting input.
-    animateTo(m_window->geometry().translated(0, -6), 0, m_expanded, true);
+    // Leave the silhouette in place while it fades, without intercepting input.
+    animateTo(m_window->geometry(), 0, m_expanded, true);
 }
 
 void Spotlight::finishHide()
@@ -194,7 +214,11 @@ void Spotlight::fit()
     const base::Rect target(area.x() + (area.width() - width) / 2, area.y() + top, width, height);
     const bool moved = m_target.topLeft() != target.topLeft() || m_target.width() != target.width();
     const double expanded = m_view->idle() ? 0 : 1;
-    if (!m_window->isShown() || moved) {
+    if (!m_window->isShown()) {
+        // show() places the entry frame before mapping. Do not allocate or
+        // commit a full-size panel only to shrink it straight away.
+        m_motion->stop();
+    } else if (moved) {
         m_motion->stop();
         place(target, 1, expanded);
     } else if (target != m_target || expanded != m_targetExpanded) {
@@ -208,12 +232,11 @@ void Spotlight::animateTo(base::Rect bounds, double opacity, double expanded, bo
 {
     using namespace std::chrono_literals;
     const auto from = m_window->geometry();
-    m_motion->setDuration(closing ? 120ms : 205ms);
-    m_motion->setEasing(closing ? ui::Animation::Easing::InOutQuad : ui::Animation::Easing::OutCubic);
+    m_motion->setDuration(closing ? 120ms : 220ms);
+    m_motion->setEasing(closing ? ui::Animation::Easing::InOutQuad : ui::Animation::Easing::OutQuad);
     m_motion->onUpdate = [this, from, bounds, fromOpacity = m_opacity, opacity,
                           fromExpanded = m_expanded, expanded](double t) {
         auto frame = bounds;
-        frame.moveTop(int(std::lround(std::lerp(from.y(), bounds.y(), t))));
         frame.setHeight(int(std::lround(std::lerp(from.height(), bounds.height(), t))));
         place(frame, std::lerp(fromOpacity, opacity, t), std::lerp(fromExpanded, expanded, t));
     };
@@ -224,7 +247,9 @@ void Spotlight::place(base::Rect bounds, double opacity, double expanded)
 {
     m_opacity = opacity;
     m_expanded = expanded;
-    m_window->setGeometry(bounds);
+    if (m_window->geometry().topLeft() != bounds.topLeft())
+        m_window->setPosition(bounds.topLeft());
+    m_window->setSize(bounds.size());
     m_window->surface()->setOpacity(float(opacity));
     m_view->setExpansion(expanded);
     applyGlass();

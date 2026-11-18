@@ -7,6 +7,8 @@
 #include <string_view>
 
 #include "shell/common/text_match.h"
+#include "base/strings.h"
+#include "base/url.h"
 
 namespace cutefish::shell::spotlight {
 namespace fs = std::filesystem;
@@ -65,6 +67,55 @@ std::pair<FileType, const char *> classify(const fs::path &path, bool directory)
 }
 
 } // namespace
+
+std::string webDomain(std::string_view text)
+{
+    text = base::strings::trimmed(text);
+    if (text.find_first_of(" \t\r\n\\") != text.npos)
+        return {};
+    const auto schemeEnd = text.find("://");
+    if (schemeEnd == text.npos)
+        return {};
+    const auto scheme = toLower(std::string(text.substr(0, schemeEnd)));
+    if (scheme != "http" && scheme != "https")
+        return {};
+    text.remove_prefix(schemeEnd + 3);
+    auto host = text.substr(0, text.find_first_of("/?#"));
+    if (const auto user = host.rfind('@'); user != host.npos)
+        host.remove_prefix(user + 1);
+    const bool ipv6 = host.starts_with('[');
+    const auto bracket = host.find(']');
+    if (ipv6 && (bracket == host.npos || bracket <= 1))
+        return {};
+    const auto end = ipv6 ? bracket + 1 : host.find(':');
+    if (end != host.npos && end != host.size()) {
+        const auto port = host.substr(end + 1);
+        if (host[end] != ':' || port.empty() || port.find_first_not_of("0123456789") != port.npos)
+            return {};
+        host = host.substr(0, end);
+    }
+    return std::string(host);
+}
+
+std::string mailDraft(std::string_view recipients, std::string_view subject, std::string_view message)
+{
+    if (subject.find_first_of("\r\n") != subject.npos)
+        return {};
+    std::string mailto = "mailto:";
+    for (auto item : base::strings::splitViews(recipients, ',')) {
+        const auto address = base::strings::trimmed(item);
+        const auto at = address.find('@');
+        if (at == address.npos || at == 0 || at + 1 == address.size()
+            || address.find('@', at + 1) != address.npos || address.find_first_of(" \t\r\n?#;<>\"") != address.npos)
+            return {};
+        if (mailto.size() > 7)
+            mailto += ',';
+        mailto += base::url::percentEncoded(address, "@");
+    }
+    if (mailto.size() == 7)
+        return {};
+    return mailto + "?subject=" + base::url::percentEncoded(subject) + "&body=" + base::url::percentEncoded(message);
+}
 
 bool inCategory(const base::DesktopEntry &entry, Category category)
 {

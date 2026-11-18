@@ -52,12 +52,15 @@ add_library(cutefish-shell-clipboard-view STATIC
     src/shell/clipboard/clipboard_picker_view.h
 )
 target_link_libraries(cutefish-shell-clipboard-view PUBLIC cutefish-shell cutefish-shell-clipboard)
+find_package(CutefishFiles REQUIRED)
 add_library(cutefish-shell-spotlight STATIC
     src/shell/spotlight/spotlight.cpp
+    src/shell/spotlight/spotlight_preview.cpp
     src/shell/spotlight/spotlight_view.cpp
     src/shell/spotlight/spotlight_search.cpp
 )
-target_link_libraries(cutefish-shell-spotlight PUBLIC cutefish-shell cutefish-shell-clipboard cutefish-shell-dock)
+target_link_libraries(cutefish-shell-spotlight PUBLIC cutefish-shell cutefish-shell-clipboard cutefish-shell-dock
+    PRIVATE Cutefish::FilesThumbnails)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-spotlight)
 
 # The sheets offering force quit for applications that stopped responding.

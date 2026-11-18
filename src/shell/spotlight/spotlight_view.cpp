@@ -8,6 +8,7 @@
 
 #include "base/i18n.h"
 #include "base/paths.h"
+#include "base/strings.h"
 #include "base/transform.h"
 #include "base/url.h"
 #include "input/seat.h"
@@ -17,6 +18,7 @@
 #include "shell/common/text_match.h"
 #include "shell/dock/dock.h"
 #include "shell/shell_data.h"
+#include "shell/spotlight/spotlight_preview.h"
 #include "ui/drag.h"
 #include "ui/image_view.h"
 #include "ui/icon.h"
@@ -64,10 +66,11 @@ std::string timeLabel(int64_t seconds, const char *format)
     return output;
 }
 
-bool webLink(const std::string &text)
-{
-    return (text.starts_with("https://") || text.starts_with("http://")) && text.find_first_of(" \r\n\t") == text.npos;
-}
+constexpr std::array searchEngines{
+    std::pair{"DuckDuckGo", "https://duckduckgo.com/?q="},
+    std::pair{"Google", "https://www.google.com/search?q="},
+    std::pair{"Wikipedia", "https://en.wikipedia.org/w/index.php?search="},
+};
 
 void plate(ui::Painter &p, ui::RectF box, double radius, ui::Color color)
 {
@@ -184,6 +187,12 @@ protected:
     {
         return m_owner->key(event, this) || ui::TextField::keyPress(event);
     }
+    void pointerPress(const ui::PointerEvent &event) override
+    {
+        if (event.button == ui::MouseButton::Left)
+            m_owner->actionFieldPressed(this);
+        ui::TextField::pointerPress(event);
+    }
 private:
     SpotlightView *m_owner;
 };
@@ -214,7 +223,11 @@ SpotlightView::SpotlightView(Shell &shell, Dock *dock, ClipboardHistory &clipboa
         input->setSelectByMouse(true);
         input->setVisible(false);
         input->setMaximumLength(2048);
+        input->onTextChanged = [this] { actionEdited(); };
     }
+    m_parameter->setName("spotlight-action-parameter");
+    m_subject->setName("spotlight-action-subject");
+    m_message->setName("spotlight-action-message");
     m_icons->setClipsChildren(true);
     m_icons->setName("spotlight-result-icons");
     setTracksHover(true);
@@ -260,6 +273,8 @@ void SpotlightView::setMode(Mode mode)
     const bool changed = m_mode != mode;
     m_mode = mode;
     m_action.reset();
+    m_actionCard.reset();
+    m_suggestions.clear();
     m_confirmClear = false;
     m_status.clear();
     m_folder.clear();
@@ -352,7 +367,8 @@ int SpotlightView::preferredHeight() const
     if (m_confirmClear)
         return 160;
     if (m_action)
-        return m_savingQuick ? 156 : m_action->key == "email" ? 252 : 156;
+        return m_savingQuick ? 156 : int(m_phraseBottom) + 43 +
+            (m_actionCard ? 62 : m_suggestions.empty() ? 0 : 6 + 29 * int(m_suggestions.size()));
     return int(bodyTop()) + std::clamp(int(std::ceil(m_bodyHeight)) + 5, 60, grid() ? 420 : 376);
 }
 
@@ -432,6 +448,9 @@ void SpotlightView::appendFiles(const std::string &query)
         detail += " · " + file->parent;
         m_results.push_back({Mode::Files, file->name, std::move(detail), file->icon, file->path, {}, {},
                              file->type == FileType::Folders, home ? tr("Recents") : std::string()});
+        if (file->type != FileType::Folders && file->type != FileType::All && file->size > 0
+            && file->size < 1024ULL * 1024 * 1024)
+            m_results.back().filePreview = std::to_string(file->modified) + ':' + std::to_string(file->size) + ':' + file->path;
     }
 }
 
@@ -475,8 +494,11 @@ void SpotlightView::appendClipboard(const std::string &query)
         const auto &entry = model.entry(i);
         const bool image = entry.kind == ClipboardEntry::Kind::Image;
         const bool files = entry.kind == ClipboardEntry::Kind::Files;
-        const bool link = webLink(entry.text);
-        std::string detail = image ? entry.imageType : files ? tr("Files") : link ? tr("Link") : tr("Text");
+        const auto domain = spotlight::webDomain(entry.text);
+        const bool link = !image && !files && !domain.empty();
+        std::string detail = image ? entry.imageType : files ? tr("Files") : link ? tr("URL") : tr("Text");
+        if (link)
+            detail += " · " + domain;
         if (entry.copied)
             detail += std::string(" · ") + tr("Copied") + " " + timeLabel(*entry.copied / 1000, "%H:%M");
         m_results.push_back({Mode::Clipboard, model.title(i), std::move(detail), image ? "image-x-generic"
@@ -538,7 +560,10 @@ void SpotlightView::refreshResults()
 void SpotlightView::refreshLayout()
 {
     stopScrolling();
-    buildTiles(grid(), geometry().width > 0 ? geometry().width : kWidth);
+    const double width = geometry().width > 0 ? geometry().width : kWidth;
+    buildTiles(grid(), width);
+    if (inlineAction())
+        layoutAction(width);
     if (onResize)
         onResize();
     requestLayout();
@@ -639,6 +664,142 @@ void SpotlightView::fadeBody()
     m_bodyFade->start();
 }
 
+void SpotlightView::layoutAction(double width)
+{
+    const ui::FontMetrics metrics(font(20));
+    const bool email = m_action->key == "email";
+    double x = 53, y = 11;
+    const double right = width - 16;
+    m_phrase.clear();
+    auto add = [&](std::string label, int token = -1, Field *input = nullptr) {
+        const double available = std::max(1.0, right - 53);
+        const double natural = std::ceil(metrics.horizontalAdvanceF(input && !input->text().empty() ? input->text() : label));
+        const double length = std::min(available, token < 0 ? natural + 2 : std::max(54.0, natural + 18));
+        if (x > 53 && x + length > right) {
+            x = 53;
+            y += 31;
+        }
+        const ui::RectF rect{x, y, length, 28};
+        m_phrase.push_back({input ? std::string{} : std::move(label), rect, token});
+        if (input)
+            input->setGeometry(rect);
+        x += length + 6;
+    };
+    if (email) {
+        add(tr("Send"));
+        add(tr("Body"), Message, m_message);
+        add(tr("with"));
+        add(tr("Subject"), Subject, m_subject);
+        add(tr("to"));
+        add(tr("Recipients"), Recipient, m_parameter);
+    } else {
+        add(tr("Search for"));
+        add(tr("Search terms"), SearchTerms, m_parameter);
+        add(tr("using"));
+        add(std::string(searchEngines[m_engine].first) + " ▾", SearchEngine);
+    }
+    m_phraseBottom = std::max<double>(kHeader, y + 35);
+    m_message->setVisible(email);
+    m_subject->setVisible(email);
+    m_parameter->setVisible(true);
+}
+
+void SpotlightView::actionFieldPressed(Field *field)
+{
+    if (!inlineAction())
+        return;
+    m_activeToken = field == m_subject ? Subject : field == m_message ? Message : field == m_parameter
+        ? (m_action->key == "email" ? Recipient : SearchTerms) : -1;
+    m_suggestionDismissed = false;
+    updateSuggestions();
+    refreshLayout();
+}
+
+void SpotlightView::focusToken(int token)
+{
+    if (token == SearchEngine)
+        m_actionCard.reset();
+    m_activeToken = token;
+    m_suggestionDismissed = false;
+    auto *input = token == Message ? m_message : token == Subject ? m_subject : m_parameter;
+    input->setFocus();
+    updateSuggestions();
+    refreshLayout();
+}
+
+void SpotlightView::actionEdited()
+{
+    if (m_updating || !m_action)
+        return;
+    m_status.clear();
+    m_actionCard.reset();
+    m_suggestionDismissed = false;
+    if (m_activeToken == SearchEngine)
+        m_activeToken = SearchTerms;
+    updateSuggestions();
+    refreshLayout();
+}
+
+void SpotlightView::updateSuggestions()
+{
+    m_suggestions.clear();
+    m_suggestionIndex = -1;
+    if (!inlineAction() || m_suggestionDismissed || m_actionCard)
+        return;
+    if (m_activeToken == SearchEngine) {
+        for (size_t i = 0; i < searchEngines.size(); ++i)
+            m_suggestions.push_back({searchEngines[i].first, std::to_string(i)});
+        m_suggestionIndex = m_engine;
+    } else if (m_activeToken == Recipient) {
+        // Complete the last address, without reading system contacts or making a network request.
+        const std::string &value = m_parameter->text();
+        const auto comma = value.rfind(',');
+        const std::string prefix = comma == value.npos ? "" : value.substr(0, comma + 1) + ' ';
+        const auto address = base::strings::trimmed(std::string_view(value).substr(prefix.empty() ? 0 : comma + 1));
+        const auto at = address.find('@');
+        if (at == address.npos || at == 0 || address.find_first_of(" \t\r\n") != address.npos)
+            return;
+        const auto partial = toLower(std::string(address.substr(at + 1)));
+        for (std::string_view domain : {"gmail.com", "outlook.com", "icloud.com"}) {
+            if (domain.starts_with(partial) && domain != partial) {
+                std::string completion = std::string(address.substr(0, at + 1)) + std::string(domain);
+                m_suggestions.push_back({completion, prefix + completion});
+            }
+        }
+    }
+}
+
+void SpotlightView::chooseSuggestion(int index)
+{
+    if (index < 0 || index >= int(m_suggestions.size()))
+        return;
+    const auto value = m_suggestions[index].value;
+    if (m_activeToken == SearchEngine) {
+        m_engine = value.front() - '0';
+        m_actionCard.reset();
+        m_activeToken = SearchTerms;
+    } else {
+        m_updating = true;
+        m_parameter->setText(value);
+        m_updating = false;
+    }
+    m_suggestionDismissed = true;
+    m_status.clear();
+    updateSuggestions();
+    refreshLayout();
+}
+
+ui::RectF SpotlightView::suggestionRect(int index, double width) const
+{
+    return {12, m_phraseBottom + 4 + 29 * index, width - 24, 28};
+}
+
+ui::RectF SpotlightView::actionButton(double width, double height) const
+{
+    const double size = std::min(m_actionCard ? 150.0 : 88.0, width - 26);
+    return {width - size - 12, height - 39, size, 28};
+}
+
 void SpotlightView::layout()
 {
     const double w = geometry().width;
@@ -648,13 +809,15 @@ void SpotlightView::layout()
                                      offersOpen ? 114.0 : 50.0, m_expansion);
     m_field->setGeometry({54, 0, std::max(0.0, header - 54 - reserve), kHeader});
     m_field->setVisible(!m_action);
-    const bool email = m_action && !m_savingQuick && m_action->key == "email";
-    m_parameter->setGeometry({18, 75, w - 36, 34});
-    m_subject->setGeometry({18, 118, w - 36, 34});
-    m_message->setGeometry({18, 161, w - 36, 34});
-    m_parameter->setVisible(bool(m_action));
-    m_subject->setVisible(email);
-    m_message->setVisible(email);
+    if (inlineAction()) {
+        layoutAction(w);
+    } else {
+        m_parameter->setFrameVisible(true);
+        m_parameter->setGeometry({18, 75, w - 36, 34});
+        m_parameter->setVisible(bool(m_action));
+        m_subject->setVisible(false);
+        m_message->setVisible(false);
+    }
 
     double x = 17;
     const ui::FontMetrics chipMetrics(font(12));
@@ -709,13 +872,18 @@ void SpotlightView::layout()
         slot.result = tile.result;
         auto *icon = slot.view;
         const auto &result = m_results[tile.result];
-        icon->setSourceSize({iconSize, iconSize});
         icon->setVisible(true);
         const ui::RectF box{grid() ? tile.rect.x + (tile.rect.width - iconSize) / 2 : tile.rect.x + 12,
                             y + (grid() ? 8 : 11), iconSize, iconSize};
         icon->setGeometry(box);
-        if (result.type == Mode::Clipboard && result.icon == "image-x-generic" && updateClipboardPreview(result, slot))
+        if ((result.type == Mode::Clipboard && result.icon == "image-x-generic" && updateClipboardPreview(result, slot))
+            || (!result.filePreview.empty() && updateFilePreview(result, slot))) {
+            icon->setCornerRadius(4);
+            icon->setGeometry({tile.rect.x + 8, y + 8, 38, 36});
             continue;
+        }
+        icon->setCornerRadius(0);
+        icon->setSourceSize({iconSize, iconSize});
         auto path = ui::themeIconPath(result.icon, int(std::ceil(iconSize)), scale);
         if (path.empty())
             path = ui::themeIconPath(result.type == Mode::Applications ? "application-x-executable" : "text-x-generic",
@@ -751,16 +919,48 @@ bool SpotlightView::updateClipboardPreview(const Result &result, ResultIcon &ico
                 found->second = std::move(image);
             requestLayout();
         }).detach();
-    } else if (it->second && !it->second->isNull()) {
-        if (icon.previewKey == result.key)
-            return true;
-        const ui::Bitmap &bitmap = *it->second;
-        icon.previewKey = result.key;
-        icon.view->setPixels(bitmap.width(), bitmap.height(), reinterpret_cast<const uint32_t *>(bitmap.constBits()),
-                             bitmap.stride(), true);
-        return true;
+    } else if (it->second) {
+        return applyPreview("clipboard:" + result.key, *it->second, icon);
     }
     return false;
+}
+
+bool SpotlightView::updateFilePreview(const Result &result, ResultIcon &icon)
+{
+    if (auto it = m_fileThumbnails.find(result.filePreview); it != m_fileThumbnails.end())
+        return applyPreview(result.filePreview, it->second, icon);
+    if (m_pendingThumbnails.size() >= 4 || std::ranges::find(m_pendingThumbnails, result.filePreview) != m_pendingThumbnails.end())
+        return false;
+    m_pendingThumbnails.push_back(result.filePreview);
+    static base::ThreadPool pool(2);
+    pool.run([path = result.key] { return spotlight::loadFilePreview(path); },
+             [this, key = result.filePreview, alive = std::weak_ptr<bool>(m_alive)](ui::Bitmap image) {
+        if (alive.expired())
+            return;
+        std::erase(m_pendingThumbnails, key);
+        if (m_fileThumbnailOrder.size() >= 192) {
+            m_fileThumbnails.erase(m_fileThumbnailOrder.front());
+            m_fileThumbnailOrder.pop_front();
+        }
+        m_fileThumbnailOrder.push_back(key);
+        m_fileThumbnails.emplace(key, std::move(image));
+        requestLayout();
+        requestPaint();
+    }).detach();
+    return false;
+}
+
+bool SpotlightView::applyPreview(const std::string &key, const ui::Bitmap &bitmap, ResultIcon &icon)
+{
+    if (bitmap.isNull())
+        return false;
+    if (icon.previewKey != key) {
+        icon.previewKey = key;
+        const auto pixels = bitmap.converted(ui::Bitmap::Format::Argb32Premultiplied);
+        icon.view->setPixels(pixels.width(), pixels.height(), reinterpret_cast<const uint32_t *>(pixels.constBits()),
+                             pixels.stride(), true);
+    }
+    return true;
 }
 
 void SpotlightView::paint(ui::Painter &p)
@@ -808,20 +1008,47 @@ void SpotlightView::paint(ui::Painter &p)
         plate(p, open, 9, subtle);
         text(p, tr("Open"), open, 12, ink, true);
     }
-    p.drawHorizontalLine(17, kHeader, field - 34, hairline);
+    if (!inlineAction())
+        p.drawHorizontalLine(17, kHeader, field - 34, hairline);
     p.multiplyOpacity(m_bodyOpacity);
     if (m_action || m_confirmClear) {
-        if (m_action)
-            text(p, m_savingQuick ? std::string(tr("Add quick keys")) + " — " + m_action->title : m_action->title,
-                 {54, 0, w - 105, kHeader}, 21, ink);
+        if (inlineAction()) {
+            for (const auto &part : m_phrase) {
+                if (part.token >= 0)
+                    plate(p, part.rect, 8, part.token == m_activeToken ? selected : subtle);
+                text(p, part.label, part.rect.adjusted(part.token >= 0 ? 7 : 0, 0, -1, 0), 20,
+                     part.token >= 0 ? theme.highlight : ink);
+            }
+            if (!m_suggestions.empty() || m_actionCard)
+                p.drawHorizontalLine(16, m_phraseBottom, w - 32, hairline);
+            for (int i = 0; i < int(m_suggestions.size()); ++i) {
+                const auto row = suggestionRect(i, w);
+                plate(p, row, 8, i == m_suggestionIndex ? selected : subtle);
+                text(p, m_suggestions[i].label, row.adjusted(13, 0, -10, 0), 14, ink);
+            }
+            if (m_actionCard) {
+                const ui::RectF card{12, m_phraseBottom + 6, w - 24, 54};
+                plate(p, card, 12, subtle);
+                glyph(p, m_action->key == "email" ? Symbol::Actions : Symbol::Search,
+                      {card.x + 19, card.y + 26}, secondary, 17);
+                text(p, m_actionCard->title, {card.x + 35, card.y + 5, card.width - 47, 23}, 14, ink, false, true);
+                text(p, m_actionCard->detail, {card.x + 35, card.y + 28, card.width - 47, 20}, 12, secondary);
+            }
+        } else if (m_action) {
+            text(p, std::string(tr("Add quick keys")) + " — " + m_action->title, {54, 0, w - 105, kHeader}, 21, ink);
+        }
         if (m_confirmClear) {
             plate(p, {12, 65, w - 24, h - 76}, 16, subtle);
             text(p, tr("Clear the clipboard history?"), {20, 70, w - 40, 42}, 16, ink, true);
         }
-        const auto button = ui::RectF{w - 105, h - 41, 88, 30};
-        plate(p, button, 15, selected);
-        text(p, m_confirmClear ? tr("Clear") : m_savingQuick ? tr("Save") : tr("Run"), button, 14, ink, true, true);
-        text(p, m_status, {18, h - 41, w - 133, 30}, 12, secondary);
+        const auto button = actionButton(w, h);
+        if (!inlineAction() || h >= m_phraseBottom + 43) {
+            plate(p, button, 14, selected);
+            text(p, m_confirmClear ? tr("Clear") : m_savingQuick ? tr("Save") : !m_actionCard ? tr("Run")
+                 : m_action->key == "email" ? tr("Open in Mail") : tr("Open in Browser"), button, 14, ink, true, true);
+            const auto hint = inlineAction() && m_status.empty() ? tr("Ctrl+↵") : m_status;
+            text(p, hint, {18, button.y, button.x - 25, button.height}, 12, secondary);
+        }
         p.restore();
         return;
     }
@@ -985,7 +1212,7 @@ void SpotlightView::pointerRelease(const ui::PointerEvent &event)
     const auto pos = event.position;
     const auto w = fieldWidth(geometry().width), h = geometry().height;
     if (m_confirmClear) {
-        if (pos.y >= h - 48 && pos.x >= w - 115)
+        if (actionButton(w, h).contains(pos))
             m_clipboard.clear();
         m_confirmClear = false;
         refreshResults();
@@ -994,6 +1221,24 @@ void SpotlightView::pointerRelease(const ui::PointerEvent &event)
     if (const int mode = hitMode(pos); mode >= 1) {
         setMode(Mode(mode));
         return;
+    }
+    if (inlineAction()) {
+        for (const auto &part : m_phrase) {
+            if (part.token == SearchEngine && part.rect.contains(pos)) {
+                focusToken(SearchEngine);
+                return;
+            }
+        }
+        for (int i = 0; i < int(m_suggestions.size()); ++i) {
+            if (suggestionRect(i, geometry().width).contains(pos)) {
+                chooseSuggestion(i);
+                return;
+            }
+        }
+        if (h >= m_phraseBottom + 43 && actionButton(geometry().width, h).contains(pos)) {
+            runAction();
+            return;
+        }
     }
     if (pos.y < kHeader) {
         if (!idle() && pos.x > w - 49)
@@ -1009,7 +1254,7 @@ void SpotlightView::pointerRelease(const ui::PointerEvent &event)
         return;
     }
     if (m_action) {
-        if (pos.y >= h - 47 && pos.x >= w - 112)
+        if (!inlineAction() && actionButton(w, h).contains(pos))
             runAction();
         return;
     }
@@ -1045,6 +1290,8 @@ bool SpotlightView::scroll(const ui::ScrollEvent &event)
             m_scroller = std::make_unique<ui::Scroller>(window(), static_cast<ui::Scroller::Target *>(this));
             m_scroller->setElastic(false);
         }
+        delta.deltaX *= 1.65;
+        delta.deltaY *= 1.65;
         return m_scroller->handleScroll(delta);
     }
 
@@ -1052,13 +1299,13 @@ bool SpotlightView::scroll(const ui::ScrollEvent &event)
         m_scroller->cancel(false);
     if (!m_wheel) {
         m_wheel = std::make_unique<WheelAnimation>(window());
-        m_wheel->setDuration(std::chrono::milliseconds(155));
+        m_wheel->setDuration(std::chrono::milliseconds(120));
         m_wheel->setEasing(ui::Animation::Easing::OutCubic);
     }
-    // Match the toolkit's 45px per detent, but ease towards the accumulated
-    // destination, so quick successive ticks do not drop distance.
-    const ui::PointF step{delta.value120X ? delta.value120X * 45.0 / 120 : delta.deltaX * 4.5,
-                          delta.value120Y ? delta.value120Y * 45.0 / 120 : delta.deltaY * 4.5};
+    // Move roughly one row per detent in a list, or one grid row in Apps.
+    const double stride = grid() ? 100 : 76;
+    const ui::PointF step{delta.value120X ? delta.value120X * 72.0 / 120 : delta.deltaX * 7.2,
+                          delta.value120Y ? delta.value120Y * stride / 120 : delta.deltaY * stride / 10};
     const auto from = position();
     const auto target = boundedPosition((m_wheel->isRunning() ? m_wheelTarget : from) + step);
     if (target == from) {
@@ -1123,7 +1370,13 @@ bool SpotlightView::key(const ui::KeyEvent &event, Field *field)
             return false;
         if (m_confirmClear) {
             m_confirmClear = false;
-            requestPaint();
+            refreshResults();
+        } else if (inlineAction() && !m_suggestions.empty()) {
+            m_suggestionDismissed = true;
+            if (m_activeToken == SearchEngine)
+                m_activeToken = SearchTerms;
+            updateSuggestions();
+            refreshLayout();
         } else if (m_action) {
             exitAction();
         } else if (!m_folder.empty() && field->text().empty()) {
@@ -1143,9 +1396,37 @@ bool SpotlightView::key(const ui::KeyEvent &event, Field *field)
         return true;
     }
     if (m_action) {
-        if ((event.key == Return || event.key == KeypadEnter) && field->preedit().empty()) {
-            if (m_savingQuick || (event.modifiers & ui::ControlModifier))
+        if (!field->preedit().empty())
+            return false;
+        const bool enter = event.key == Return || event.key == KeypadEnter;
+        if (enter && (m_savingQuick || (event.modifiers & ui::ControlModifier))) {
+            runAction();
+            return true;
+        }
+        if (!inlineAction())
+            return false;
+        if (!m_suggestions.empty() && (event.key == Up || event.key == Down)) {
+            const int count = int(m_suggestions.size());
+            m_suggestionIndex = m_suggestionIndex < 0 ? (event.key == Down ? 0 : count - 1)
+                : (m_suggestionIndex + (event.key == Down ? 1 : count - 1)) % count;
+            requestPaint();
+            return true;
+        }
+        if (enter && m_suggestionIndex >= 0) {
+            chooseSuggestion(m_suggestionIndex);
+            return true;
+        }
+        if (enter || event.key == Tab) {
+            const bool reverse = event.modifiers & ui::ShiftModifier;
+            const bool email = m_action->key == "email";
+            if (email && (enter && m_activeToken == Recipient))
                 runAction();
+            else if (!email && enter)
+                runAction();
+            else if (!email)
+                focusToken(m_activeToken == SearchEngine ? SearchTerms : SearchEngine);
+            else
+                focusToken((m_activeToken + (reverse ? 2 : 1)) % 3);
             return true;
         }
         return false;
@@ -1293,7 +1574,8 @@ void SpotlightView::openMenu(ui::PointF point, int row)
                 if (model.keyAt(i) != result.key)
                     continue;
                 const auto &entry = model.entry(i);
-                const std::string target = entry.files.size() == 1 ? entry.files.front() : webLink(entry.text) ? entry.text : "";
+                const std::string target = entry.files.size() == 1 ? entry.files.front() :
+                    !spotlight::webDomain(entry.text).empty() ? std::string(base::strings::trimmed(entry.text)) : "";
                 if (!target.empty())
                     m_menu.setItemIcon(m_menu.addItem(tr("Open"), [this, target] { openTarget(target); }), "document-open");
                 break;
@@ -1348,25 +1630,43 @@ void SpotlightView::openMenu(ui::PointF point, int row)
 void SpotlightView::showAction(const Result &result, bool quick)
 {
     m_action = result;
+    m_actionCard.reset();
     m_status.clear();
     m_savingQuick = quick;
+    m_updating = true;
+    m_activeToken = -1;
+    m_engine = 0;
+    m_suggestionDismissed = false;
+    m_suggestions.clear();
+    for (auto *input : {m_parameter, m_subject, m_message}) {
+        input->setFrameVisible(quick);
+        input->setTextMargins(quick ? 8 : 6, quick ? 8 : 6);
+        input->setFontSize(quick ? 14 : 20);
+    }
     m_parameter->setPlaceholder(quick ? tr("Type a short key, or leave blank to remove")
-                              : result.key == "email" ? tr("Recipient (email address)") : tr("Search terms"));
+                              : result.key == "email" ? tr("Recipients") : tr("Search terms"));
     m_parameter->setText(quick ? result.quick : "");
     m_subject->clear();
     m_subject->setPlaceholder(tr("Subject"));
     m_message->clear();
-    m_message->setPlaceholder(tr("Message"));
+    m_message->setPlaceholder(tr("Body"));
+    m_updating = false;
     refreshResults();
     fadeBody();
-    m_parameter->setVisible(true);
-    m_parameter->setFocus();
-    m_parameter->selectAll();
+    if (quick) {
+        m_parameter->setVisible(true);
+        m_parameter->setFocus();
+        m_parameter->selectAll();
+    } else {
+        focusToken(result.key == "email" ? Message : SearchTerms);
+    }
 }
 
 void SpotlightView::exitAction()
 {
     m_action.reset();
+    m_actionCard.reset();
+    m_suggestions.clear();
     m_status.clear();
     refreshResults();
     fadeBody();
@@ -1398,19 +1698,37 @@ void SpotlightView::runAction()
             m_settings.sync();
             exitAction();
         }
-    } else if (m_action->key == "email") {
-        if (value.find('@') == value.npos || value.find_first_of("\r\n ?#") != value.npos) {
-            m_status = tr("Enter a valid recipient address.");
-        } else {
-            openTarget("mailto:" + base::url::percentEncoded(value, "@") + "?subject="
-                       + base::url::percentEncoded(m_subject->text()) + "&body=" + base::url::percentEncoded(m_message->text()));
-        }
-    } else if (!value.empty()) {
-        openTarget("https://duckduckgo.com/?q=" + base::url::percentEncoded(value));
-    } else {
-        m_status = tr("Enter a search term.");
+        requestPaint();
+        return;
     }
-    requestPaint();
+    if (m_actionCard) {
+        openTarget(m_actionCard->target);
+        return;
+    }
+    if (m_action->key == "email") {
+        auto draft = spotlight::mailDraft(value, m_subject->text(), m_message->text());
+        if (draft.empty()) {
+            focusToken(Recipient);
+            m_status = tr("Enter valid addresses, separated by commas.");
+            requestPaint();
+            return;
+        }
+        m_actionCard = ActionCard{m_subject->text().empty() ? tr("Email draft") : m_subject->text(),
+                                  std::string(tr("Draft · To: ")) + value, std::move(draft)};
+    } else {
+        if (base::strings::trimmed(value).empty()) {
+            focusToken(SearchTerms);
+            m_status = tr("Enter a search term.");
+            requestPaint();
+            return;
+        }
+        const auto &[engine, url] = searchEngines[m_engine];
+        m_actionCard = ActionCard{value, std::string(tr("Web search · ")) + engine,
+                                  url + base::url::percentEncoded(base::strings::trimmed(value))};
+    }
+    m_status.clear();
+    updateSuggestions();
+    refreshLayout();
 }
 
 } // namespace cutefish::shell

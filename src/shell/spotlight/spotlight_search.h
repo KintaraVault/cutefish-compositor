@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "shell/common/applications.h"
@@ -30,5 +31,7 @@ std::vector<DesktopEntryPtr> findApps(const std::vector<DesktopEntryPtr> &apps, 
 std::vector<File> indexFiles(const std::filesystem::path &home);
 std::vector<const File *> findFiles(const std::vector<File> &index, const std::string &query, FileType type,
                                     const std::string &folder, size_t limit);
+std::string webDomain(std::string_view text);
+std::string mailDraft(std::string_view recipients, std::string_view subject, std::string_view message);
 
 } // namespace cutefish::shell::spotlight
