@@ -1157,7 +1157,14 @@ TEST_F(ControlCenterTest, ControlCatalogRisesOverTheDockAndReachesTheScreenEdge)
     EXPECT_GT(header()->opacity, 0);
     EXPECT_LT(header()->opacity, 1);
     EXPECT_TRUE(window->surface()->backgroundBlurShape().contains({30, double(expanded.height() - 2)}));
-    EXPECT_FALSE(window->surface()->backgroundBlurShape().contains({30, 80}));
+    const auto &risingLenses = window->surface()->glass().lenses;
+    const auto sheet = std::ranges::find_if(risingLenses, [](const auto &lens) {
+        return !lens.viewport && lens.bounds.x() == 0 && lens.radius == 31;
+    });
+    ASSERT_NE(risingLenses.end(), sheet);
+    // The frame clock can be delayed under load; test the mask against the
+    // actual animated sheet instead of assuming a particular y at 130 ms.
+    EXPECT_FALSE(window->surface()->backgroundBlurShape().contains({30, sheet->bounds.y() - 1}));
     frames(std::chrono::milliseconds(260));
     const auto &mask = window->surface()->backgroundBlurShape();
     const auto &lenses = window->surface()->glass().lenses;
