@@ -112,15 +112,16 @@ private:
         bool drawn = false;
         uint64_t used = 0;
         std::unique_ptr<Texture> result;
+        std::unique_ptr<Texture> scene;
     };
 
     // A plain blur's set may be larger than `size`, unless `exact`.
     Scratch &scratch(const User &user, const base::Size &coverage, const base::Size &size,
                      bool exact = false);
-    // Copies `coverage` of the target into `textures.source`, reduced to `reduced`.
+    // Copies `coverage` of the target into `scene`, reduced to `reduced`.
     // A non-empty `texels`, rows top-down, is all of it that is written; the
     // rest keeps what it holds.
-    bool captureBackdrop(Renderer &renderer, Scratch &textures,
+    bool captureBackdrop(Renderer &renderer, Scratch &textures, std::unique_ptr<Texture> &scene,
                          const std::vector<BackdropSource> &sources, const base::Rect &coverage,
                          const base::Size &reduced, const base::Rect &allocatedBounds,
                          const base::Rect &texels = {});

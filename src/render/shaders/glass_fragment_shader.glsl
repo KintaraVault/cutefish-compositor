@@ -32,9 +32,11 @@ uniform vec4 uShapeRect;
 uniform float uOpacity;
 uniform float uNestedLens;
 uniform float uFrosted;
+uniform float uOpticalProfile;
+uniform sampler2D uSceneDetail;
 
 float roundRect(vec2 p, vec2 halfSize, float r) {
-    if (uBackdropReflection > 0.0) {
+    if (uBackdropReflection > 0.0 || uOpticalProfile > 0.0) {
         // Match the actual circular arcs of the shell's path mask, so the
         // optical lip doesn't disappear into, or detach from, the corners.
         vec2 q = abs(p) - halfSize + r;
@@ -58,7 +60,7 @@ vec2 outwardAt(vec2 p, vec2 halfSize, float r) {
     vec2 q = edge + radius;
     if (min(radius.x, radius.y) <= 0.0 || min(q.x, q.y) <= 0.0)
         return edge.x > edge.y ? vec2(sign(p.x), 0.0) : vec2(0.0, sign(p.y));
-    if (uBackdropReflection > 0.0)
+    if (uBackdropReflection > 0.0 || uOpticalProfile > 0.0)
         return sign(p) * normalize(q);
     return sign(p) * cornerNormal(q / radius, radius);
 }
@@ -99,6 +101,55 @@ vec3 backdrop(vec2 uv) {
 
 float luminance(vec3 rgb) {
     return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 toLinear(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+vec3 toDisplay(vec3 c) {
+    return mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+
+// Sfumato's widget and control optics, evaluated on our captured scene.
+// d and the material coefficients are in logical pixels, independent of DPI.
+vec3 sceneOptics(vec2 uv, vec2 n, float d, float radius, vec2 margin) {
+    bool control = uOpticalProfile > 2.5;
+    float scale = uRim.y;
+    float edge = exp(-d / (control ? 3.0 : clamp(0.16 * radius / scale, 2.4, 5.2)));
+    float rise = control ? 0.15 : 0.85;
+    float bend = (control ? 40.0 : 5.4) * edge * sqrt(max(0.0, 1.0 - exp(-d / rise)));
+    vec2 ray = uv - n * bend * scale / uCoverage;
+    vec2 split = 0.12 * edge * n * scale / uCoverage;
+    vec2 a = clamp(ray + split, margin, 1.0 - margin);
+    vec2 b = clamp(ray, margin, 1.0 - margin);
+    vec2 c = clamp(ray - split, margin, 1.0 - margin);
+    vec3 soft = vec3(backdrop(a).r, backdrop(b).g, backdrop(c).b);
+    vec3 sharp = vec3(texture2D(uSceneDetail, vec2(a.x, 1.0 - a.y)).r,
+                      texture2D(uSceneDetail, vec2(b.x, 1.0 - b.y)).g,
+                      texture2D(uSceneDetail, vec2(c.x, 1.0 - c.y)).b);
+    float detail = (control ? 0.35 : 0.10) * edge;
+    vec3 incident = control ? mix(soft, sharp, detail) : toDisplay(mix(toLinear(soft), toLinear(sharp), detail));
+    float luma = luminance(incident);
+    if (control) {
+        vec3 body = clamp(1.156128861 * incident - 0.547155246 * luma + 0.105587907, 0.0, 1.0);
+        vec4 basis = vec4(1.0, luma, luma * luma, n.x * n.y);
+        vec3 t = (vec3(d) - vec3(0.0, 0.5, 1.0)) / 0.45;
+        vec3 weights = exp(-t * t);
+        float reflection = weights.x * dot(basis, vec4(0.056475389, 0.3938869673, -0.1895415512, 0.1333431443))
+                         + weights.y * dot(basis, vec4(0.1073629117, 0.1690335071, -0.1677637103, 0.2014503044))
+                         + weights.z * dot(basis, vec4(-0.0099656682, 0.0296566292, 0.0310743946, -0.0190238019));
+        return toDisplay(clamp(toLinear(body) + reflection, 0.0, 1.0));
+    }
+
+    // Sfumato's light appearance uses the legacy widget transfer; dark has a
+    // separate measured color response. Neither adds hue to a neutral scene.
+    vec3 body = uOpticalProfile > 1.5 ? 0.7916154951 * incident - 0.5063976728 * luma + 0.0618887076
+                                     : 0.16 * incident + 0.09;
+    float light = clamp(0.5 + 0.5 * dot(n, vec2(-0.4, -0.9)), 0.0, 1.0);
+    float rim = d / 0.7;
+    float reflectance = exp(-rim * rim) * (0.065 + 0.13 * light) + exp(-d / 2.4) * 0.016 * light;
+    return clamp(mix(body, vec3(1.0), reflectance), 0.0, 1.0);
 }
 
 vec3 scatteringRow(vec2 uv, vec2 dx, vec2 margin) {
@@ -290,6 +341,20 @@ void shade() {
     }
     float r = clamp(uRadius, 0.0, min(halfSize.x, halfSize.y));
     float sd = roundRect(p, halfSize, r);
+    if (uOpticalProfile > 0.0) {
+        vec2 n = outwardAt(p, halfSize, r);
+        float mask = mix(1.0, texture2D(uShape, uShapeRect.xy + vTexCoord * uShapeRect.zw).a, uHasShape);
+        float footprint = 0.5 * max(1.0, abs(n.x) + abs(n.y));
+        if (uNestedLens > 0.0)
+            mask *= 1.0 - smoothstep(-footprint, footprint, sd);
+        // Take two subpixel samples across the optical crest, using the mask
+        // separately for coverage rather than blending with an outline color.
+        vec2 delta = n * footprint * 0.55;
+        vec3 color = 0.5 * (sceneOptics(uv + delta / uCoverage, n, max(0.0, (-length(delta) - sd) / uRim.y), r, margin)
+                           + sceneOptics(uv - delta / uCoverage, n, max(0.0, (length(delta) - sd) / uRim.y), r, margin));
+        gl_FragColor = vec4(color, 1.0) * mask * uOpacity;
+        return;
+    }
     // The roll-off band is bounded so the glass cannot keep curving towards the
     // middle of a large surface.
     float band = clamp(uBevel > 0.0 ? uBevel : r, 1.0, min(halfSize.x, halfSize.y));

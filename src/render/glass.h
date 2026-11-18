@@ -14,7 +14,16 @@
 
 namespace cutefish::render {
 
-enum class GlassFinish { Lens, FrostedLight, FrostedDark, GalleryLight, GalleryDark };
+enum class GlassFinish {
+    Lens, FrostedLight, FrostedDark, GalleryLight, GalleryDark,
+    WidgetLight, WidgetDark, ControlTile,
+};
+
+inline bool usesSceneDetail(GlassFinish finish)
+{
+    return finish == GlassFinish::WidgetLight || finish == GlassFinish::WidgetDark
+            || finish == GlassFinish::ControlTile;
+}
 
 // Separate lenses over one filtered backdrop, positioned relative to the blur
 // rectangle. The surface's path still defines their combined coverage.

@@ -39,9 +39,10 @@ Pages, control positions and visibility preferences are stored in
 `desktop-widgets.conf`. Both use the compositor's normal per-user preferences
 directory.
 
-The interface uses the compositor's native glass. Each tile refracts the same
-captured scene independently. Live tiles use a light optical blur and a tight
-reflected crest so small details survive through the tile body. A wider,
+The interface uses the compositor's native glass. Live Control Center tiles and
+desktop widget cards use the Sfumato optical profiles: a short refracting edge,
+a mix of sharp and softened backdrop detail, and role-specific color curves.
+Widget previews and the dragged card use the same profile as desktop widgets. A wider,
 softly feathered blur below the grid
 remains visible between tiles without a solid panel or a second outline.
 The rim uses a pixel footprint aligned with the curve, with separate reflected

@@ -257,7 +257,7 @@ bool BackdropFilter::blitReduced(const std::vector<BackdropSource> &sources, con
     return glGetError() == GL_NO_ERROR;
 }
 
-bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
+bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures, std::unique_ptr<Texture> &scene,
                                      const std::vector<BackdropSource> &sources,
                                      const base::Rect &coverage, const base::Size &reduced,
                                      const base::Rect &allocatedBounds, const base::Rect &texels)
@@ -277,7 +277,7 @@ bool BackdropFilter::captureBackdrop(Renderer &renderer, Scratch &textures,
     }
     bool complete = true;
     return renderer.renderToTexture(
-                textures.source, allocatedBounds, texels,
+                scene, allocatedBounds, texels,
                 [&] {
                     GLint destination = 0;
                     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &destination);
@@ -469,7 +469,10 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
             kept->used = m_frame;
         }
     }
-    const bool reused = kept && kept->result && kept->coverage == coverage
+    const bool needsScene = glass.enabled && std::ranges::any_of(glass.lenses, [](const GlassLens &lens) {
+        return usesSceneDetail(lens.finish);
+    });
+    const bool reused = kept && kept->result && bool(kept->scene) == needsScene && kept->coverage == coverage
             && kept->reduced == reduced && kept->sigma == sigma;
     // The texels of a kept result that read what changed of the backdrop,
     // rows top-down: past the kernel's taps, a texel each for the capture's
@@ -519,6 +522,10 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
     } restoreClips {clips, std::exchange(clips, {})};
 
     std::unique_ptr<Texture> &result = opaque ? m_opaque : kept ? kept->result : textures->result;
+    if (kept && !needsScene)
+        kept->scene.reset();
+    auto &scene = opaque ? m_opaque : kept && needsScene ? kept->scene
+                : textures ? textures->source : result;
     if (opaque && (!m_opaque || m_opaqueColor != *opaque)) {
         const uint8_t texel[4] = {uint8_t(std::lround(std::clamp(opaque->r, 0.0f, 1.0f) * 255)),
                                   uint8_t(std::lround(std::clamp(opaque->g, 0.0f, 1.0f) * 255)),
@@ -538,10 +545,14 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
                             kGaussianMaxReach + 1)
                       .intersected(reducedBounds)
             : base::Rect();
-    if (!opaque && (!reused || redoing)
-        && !captureBackdrop(renderer, *textures, sources, coverage, reduced, allocatedBounds,
-                            sampledTexels))
-        return;
+    if (!opaque && (!reused || redoing)) {
+        // A failed capture can leave a partially updated retained scene.
+        if (kept)
+            kept->coverage = {};
+        if (!captureBackdrop(renderer, *textures, scene, sources, coverage, reduced, allocatedBounds,
+                             sampledTexels))
+            return;
+    }
 
     const auto drawQuad = [&](const GlProgram &program, Texture *input, const base::Rect &target,
                               bool inverted, const base::SizeF &share = {1, 1}) {
@@ -587,14 +598,14 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
         const base::Rect rows =
                 redo.adjusted(0, -kGaussianMaxReach, 0, kGaussianMaxReach).intersected(reducedBounds);
         kept->coverage = base::Rect();
-        if (!filter(textures->source.get(), textures->temp, true, rows)
+        if (!filter(scene.get(), textures->temp, true, rows)
             || !filter(textures->temp.get(), result, false, redo))
             return;
         kept->coverage = coverage;
     } else if (!opaque && !reused) {
         if (kept)
             kept->coverage = base::Rect();
-        if (!filter(textures->source.get(), textures->temp, true)
+        if (!filter(scene.get(), textures->temp, true)
             || !filter(textures->temp.get(), result, false))
             return;
         if (kept) {
@@ -633,6 +644,13 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
     if (glass.enabled) {
         applyGlassMaterial(program, glass, coverage.size(), scale);
         glUniform2f(program.uniform("uBackdropSize"), reduced.width(), reduced.height());
+        if (needsScene) {
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GlTexture *>(scene.get())->name());
+            glUniform1i(program.uniform("uSceneDetail"), 2);
+            glActiveTexture(GL_TEXTURE0);
+            scene->label = "glass scene detail";
+        }
     }
     glUniform1f(program.uniform("uHasShape"), shaped ? 1 : 0);
     if (shaped) {
@@ -659,6 +677,9 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
                     std::clamp(r, 0., std::min(body.width(), body.height()) / 2));
         if (glass.enabled) {
             glUniform1f(program.uniform("uNestedLens"), nested ? 1.f : 0.f);
+            glUniform1f(program.uniform("uOpticalProfile"), finish == GlassFinish::ControlTile ? 3.f
+                        : finish == GlassFinish::WidgetDark ? 2.f
+                        : finish == GlassFinish::WidgetLight ? 1.f : 0.f);
             glUniform1f(program.uniform("uFrosted"), finish == GlassFinish::GalleryDark ? -2.f
                         : finish == GlassFinish::GalleryLight ? 2.f
                         : finish == GlassFinish::FrostedDark ? -1.f
@@ -706,6 +727,11 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
         drawLens(bounds, base::RectF(lens), radius, -1, 1);
     }
     glDisable(GL_BLEND);
+    if (needsScene) {
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+    }
     if (shaped) {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, 0);

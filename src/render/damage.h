@@ -63,6 +63,10 @@ inline BackdropReach backdropReach(const GlassParams &glass, double scale)
         for (const auto &lens : glass.lenses) {
             if (lens.finish == GlassFinish::Lens)
                 continue;
+            if (usesSceneDetail(lens.finish)) {
+                reach = std::max(reach, lens.finish == GlassFinish::ControlTile ? 41.0 : 6.0);
+                continue;
+            }
             // The whole sheet reads two colour bands around its centre.
             // A change there can affect pixels far beyond the diffuser taps.
             const double x = lens.bounds.width() * .5 + std::min(lens.bounds.width() * .29, 108.);

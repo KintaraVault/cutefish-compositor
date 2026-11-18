@@ -1337,13 +1337,14 @@ std::vector<render::GlassLens> ControlCenterView::glassLenses() const
         if (!clip.intersects(ui::toBase(tile)))
             continue;
         if (m_chrome->dragging)
-            pieces.push_back({ui::toBase(tile), radius(tile), -1, 1, clip});
+            pieces.push_back({ui::toBase(tile), radius(tile), -1, 1, clip, render::GlassFinish::ControlTile});
         else
-            add(tile, radius(tile));
+            pieces.push_back({ui::toBase(tile), radius(tile), -1, 1, std::nullopt, render::GlassFinish::ControlTile});
     }
     if (m_removed && m_removal < 1) {
         const auto r = removingRect();
-        add(r, radius(r), -1, float(1 - m_removal));
+        pieces.push_back({ui::toBase(r), radius(r), -1, float(1 - m_removal), std::nullopt,
+                          render::GlassFinish::ControlTile});
     }
     if (editing()) {
         pieces.push_back({ui::toBase(catalogRect()), 31, -1, float(m_catalogReveal), std::nullopt,
@@ -1360,7 +1361,8 @@ std::vector<render::GlassLens> ControlCenterView::glassLenses() const
     }
     if (m_chrome->dragging && m_chrome->held) {
         const auto ghost = m_chrome->dragRect();
-        pieces.push_back({ui::toBase(ghost), radius(ghost), -1, 1, ui::toBase(localRect())});
+        pieces.push_back({ui::toBase(ghost), radius(ghost), -1, 1, ui::toBase(localRect()),
+                          render::GlassFinish::ControlTile});
     }
     return pieces;
 }

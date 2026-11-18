@@ -20,6 +20,7 @@
 #include "shell/shell_window.h"
 #include "ui/animation.h"
 #include "ui/embedded_window.h"
+#include "ui/geometry_conversions.h"
 #include "ui/keys.h"
 #include "ui/menu.h"
 #include "ui/popup_glass.h"
@@ -41,7 +42,12 @@ constexpr size_t kMaximumWidgets = 18;
 
 ui::Color ink(double alpha = 1) { return ui::Color::rgb(0xffffff).withAlpha(alpha); }
 
-render::GlassParams widgetGlass()
+render::GlassFinish widgetFinish()
+{
+    return panel::dark() ? render::GlassFinish::WidgetDark : render::GlassFinish::WidgetLight;
+}
+
+render::GlassParams galleryGlass()
 {
     auto glass = popupGlass(1, 1, 1, .13);
     glass.blurSigma = 14;
@@ -55,6 +61,19 @@ render::GlassParams widgetGlass()
     glass.rim = .85f;
     glass.backdropReflection = 1.f;
     return glass;
+}
+
+void applyWidgetGlass(ShellWindow &window, base::Size size)
+{
+    auto glass = popupGlass(0, 0, 0, 0);
+    glass.blurSigma = 4;
+    glass.displacement = 5.4f;
+    glass.chroma = 0;
+    const ui::RectF body {0, 0, double(size.width()), double(size.height())};
+    glass.lenses.push_back({ui::toBase(body), kRadius, -1, 1, std::nullopt, widgetFinish()});
+    ui::Path shape;
+    shape.addRoundedRect(body, kRadius, kRadius);
+    window.setBackgroundBlur({{}, size}, kRadius, glass, shape);
 }
 
 std::tm localTime()
@@ -303,6 +322,7 @@ public:
             if (!kinds.empty() && std::ranges::find(kinds, m_kind) == kinds.end())
                 m_kind = kinds.front();
             m_scroll = 0;
+            requestLayout();
             requestPaint();
         };
     }
@@ -336,6 +356,7 @@ protected:
         m_search->setTextColor(ui::ColorRecipe(palette.ink));
         m_search->setPlaceholderColor(ui::ColorRecipe(palette.muted));
         m_search->setGeometry({20, 20, sidebar() - 40, 32});
+        syncGlass();
     }
 
     void paint(ui::Painter &painter) override
@@ -486,6 +507,7 @@ protected:
         cancelDrag();
         m_owner.m_gallery->activate();
         setFocus();
+        requestLayout();
         requestPaint();
     }
     bool keyPress(const ui::KeyEvent &event) override
@@ -505,6 +527,7 @@ protected:
             m_kind = kinds[(current + (event.key == ui::key::Down ? 1 : count - 1)) % count];
             m_all = false;
             m_scroll = 0;
+            requestLayout();
             requestPaint();
         } else if (event.key == ui::key::Return) {
             if (!filtered().empty())
@@ -520,11 +543,40 @@ protected:
         if (!contains(previewClip(), m_hover) || m_drag)
             return false;
         m_scroll = std::clamp(m_scroll + event.deltaY, 0., std::max(0., contentHeight() - previewClip().height));
+        requestLayout();
         requestPaint();
         return true;
     }
 
 private:
+    void syncGlass()
+    {
+        const auto bounds = localRect();
+        if (!m_owner.m_gallery || bounds.width <= 0 || bounds.height <= 0)
+            return;
+        const bool dark = panel::dark();
+        auto glass = galleryGlass();
+        glass.tintRed = glass.tintGreen = glass.tintBlue = dark ? .055f : 1.f;
+        glass.tintAlpha = dark ? .72f : .53f;
+        glass.shadowLift = 0;
+        glass.highlightRollOff = 0;
+        glass.lenses.push_back({ui::toBase(bounds), kRadius, -1, 1, std::nullopt,
+                                dark ? render::GlassFinish::GalleryDark : render::GlassFinish::GalleryLight});
+        const auto clip = ui::toBase(previewClip());
+        const auto count = shownKinds().size();
+        for (size_t i = 0; i < count; ++i) {
+            for (int wide : {0, 1}) {
+                const auto rect = previewRect(int(i), wide);
+                if (clip.intersects(ui::toBase(rect)))
+                    glass.lenses.push_back({ui::toBase(rect), rect.height * kRadius / kSize,
+                                            -1, 1, clip, widgetFinish()});
+            }
+        }
+        ui::Path shape;
+        shape.addRoundedRect(bounds, kRadius, kRadius);
+        m_owner.m_gallery->setBackgroundBlur(ui::toBase(bounds).toRoundedRect(), kRadius, glass, shape);
+    }
+
     static bool contains(const ui::RectF &rect, ui::PointF point) { return control_paint::contains(rect, point); }
     struct Pick { Kind kind; bool wide; ui::RectF rect; };
     class LiftedCard final : public ui::View
@@ -558,9 +610,7 @@ private:
             m_lifted->setInputRegion(base::Region());
             ui::PopupGlass::prepare(*m_lifted->window());
             m_lifted->setContentView(std::make_unique<LiftedCard>(m_owner, m_held->kind, m_held->wide));
-            ui::Path shape;
-            shape.addRoundedRect({0, 0, double(rect.width()), double(rect.height())}, kRadius, kRadius);
-            m_lifted->setBackgroundBlur({0, 0, rect.width(), rect.height()}, kRadius, widgetGlass(), shape);
+            applyWidgetGlass(*m_lifted, rect.size());
             m_lifted->setGeometry(rect);
             m_lifted->show();
         } else {
@@ -636,10 +686,6 @@ private:
     }
     void drawPreview(ui::Painter &painter, ui::RectF rect, Kind kind, bool wide) const
     {
-        const double radius = rect.height * kRadius / kSize;
-        const auto fill = panel::dark() ? ink(.17) : ui::Color::rgb(0x111111).withAlpha(.53);
-        const auto shade = panel::dark() ? ink(.08) : ui::Color::rgb(0x111111).withAlpha(.69);
-        painter.fillRoundedRect(rect, radius, ui::LinearGradient::vertical(rect, fill, shade));
         Card::artwork(painter, rect, kind, wide, m_owner.m_controls.batteryCharge(), m_owner.m_controls.onBattery());
     }
     void scheduleDone()
@@ -717,7 +763,6 @@ void DesktopWidgets::updateOutput()
                 item->window->hide();
         return;
     }
-    const auto material = widgetGlass();
     for (auto &item : m_widgets) {
         if (!item->window) {
             item->window = std::make_unique<ShellWindow>(m_shell, wm::WindowRole::DesktopWidget, false);
@@ -730,9 +775,7 @@ void DesktopWidgets::updateOutput()
         const auto geometry = geometryFor(*item);
         item->window->setOutput(output->name);
         item->window->setGeometry(geometry);
-        ui::Path shape;
-        shape.addRoundedRect({0, 0, double(geometry.width()), double(geometry.height())}, kRadius, kRadius);
-        item->window->setBackgroundBlur({0, 0, geometry.width(), geometry.height()}, kRadius, material, shape);
+        applyWidgetGlass(*item->window, geometry.size());
         item->window->show();
     }
     if (m_gallery) {
@@ -741,17 +784,7 @@ void DesktopWidgets::updateOutput()
         const int h = std::min(552, screen.height() - 48);
         m_gallery->setOutput(output->name);
         m_galleryView->setRestingGeometry({screen.x() + (screen.width() - w) / 2, screen.bottom() - h - 8, w, h});
-        const bool dark = panel::dark();
-        auto galleryGlass = widgetGlass();
-        galleryGlass.tintRed = galleryGlass.tintGreen = galleryGlass.tintBlue = dark ? .055f : 1.f;
-        galleryGlass.tintAlpha = dark ? .72f : .53f;
-        galleryGlass.shadowLift = 0;
-        galleryGlass.highlightRollOff = 0;
-        galleryGlass.lenses = {{{0, 0, double(w), double(h)}, kRadius, -1, 1, std::nullopt,
-                                dark ? render::GlassFinish::GalleryDark : render::GlassFinish::GalleryLight}};
-        ui::Path shape;
-        shape.addRoundedRect({0, 0, double(w), double(h)}, kRadius, kRadius);
-        m_gallery->setBackgroundBlur({0, 0, w, h}, kRadius, galleryGlass, shape);
+        m_galleryView->requestLayout();
     }
 }
 

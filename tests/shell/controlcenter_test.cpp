@@ -592,6 +592,7 @@ TEST_F(ControlCenterTest, EditorsFollowThemeAndThePanelClosesWithAFade)
         return std::ranges::count(panel->surface()->glass().lenses, finish, &render::GlassLens::finish);
     };
     EXPECT_GT(panel->surface()->glass().tintRed, .9f);
+    EXPECT_GT(finishCount(render::GlassFinish::ControlTile), 0);
     EXPECT_EQ(1, finishCount(render::GlassFinish::FrostedLight));
     EXPECT_EQ(0, finishCount(render::GlassFinish::FrostedDark));
     ui::Theme::setCurrent(ui::Theme::dark());
@@ -612,9 +613,13 @@ TEST_F(ControlCenterTest, EditorsFollowThemeAndThePanelClosesWithAFade)
     });
     ASSERT_NE(gallery, shell->windows().end());
     EXPECT_LT((*gallery)->surface()->glass().tintRed, .1f);
+    EXPECT_GT(std::ranges::count((*gallery)->surface()->glass().lenses, render::GlassFinish::WidgetDark,
+                               &render::GlassLens::finish), 0);
     ui::Theme::setCurrent(ui::Theme::light());
     frames(std::chrono::milliseconds(40));
     EXPECT_GT((*gallery)->surface()->glass().tintRed, .9f);
+    EXPECT_GT(std::ranges::count((*gallery)->surface()->glass().lenses, render::GlassFinish::WidgetLight,
+                               &render::GlassLens::finish), 0);
     widgets.done();
 
     center->closePanels();
@@ -1378,7 +1383,7 @@ TEST_F(ControlCenterTest, WidgetGalleryRisesFromTheScreenEdgeAndSearches)
     EXPECT_EQ(kOutput.bottom() - 8, bounds.bottom());
     EXPECT_GT(bounds.bottom(), kOutput.bottom() - kDock);
     EXPECT_GT(wm::layerFor(gallery->wmWindow()), wm::StackingLayer::Dock);
-    ASSERT_EQ(1u, gallery->surface()->glass().lenses.size());
+    ASSERT_GT(gallery->surface()->glass().lenses.size(), 1u);
     EXPECT_EQ(render::GlassFinish::GalleryLight, gallery->surface()->glass().lenses.front().finish);
     search->setText("does not exist");
     key(KEY_ENTER);
