@@ -1,11 +1,10 @@
-# Control Center and desktop widgets
+# Control Center
 
 The tile and widget lenses transmit the blurred scene and reflect a wider patch
 around their contours. A bright or colored surface moving behind a tile changes
 its rim as well as its body; the material has no wallpaper-specific palette.
-The desktop widget gallery rises from the physical bottom edge, above the dock.
-Its sidebar filters previews by widget family, and dragging a preview lifts a
-separate, input-transparent glass card that follows the pointer onto the desktop.
+The [widget gallery](notification-center.md) is shared by Notification Center
+and the desktop.
 
 Open Control Center from the menu bar. **Edit Controls** opens a searchable
 catalog alongside the four-column grid. The catalog rises from the physical
@@ -27,17 +26,8 @@ menu bar creates a new page. Pick an icon above the grid and open that page
 from its own menu-bar icon. Right-click the icon strip of a custom page to
 remove the page.
 
-For desktop widgets, select **Edit Widgets** in Notification Center, add the
-**Edit Widgets** control, or right-click an existing widget. The gallery offers
-small and medium Clock, Calendar and Battery widgets. Click or drag a preview
-to add it, then drag widgets on the desktop or use their minus buttons while
-editing. **Done** or Escape closes the gallery. The Battery widget reports the
-UPower reading when present, not a simulated value.
-
 Pages, control positions and visibility preferences are stored in
-`control-center.conf`. Widget types, sizes and positions are stored in
-`desktop-widgets.conf`. Both use the compositor's normal per-user preferences
-directory.
+`control-center.conf` in the compositor's per-user preferences directory.
 
 The interface uses the compositor's native glass. Live Control Center tiles and
 desktop widget cards use the Sfumato optical profiles: a short refracting edge,

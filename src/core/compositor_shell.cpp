@@ -859,7 +859,7 @@ void CompositorShell::initShell()
             desktop->toggle();
         widgets->edit();
     };
-    notifications->centre().onEditWidgets = editWidgets;
+    widgets->setNotificationCentre(notifications->centre());
     controlCenter->setAction("clock", editWidgets);
     controlCenter->setAction("widgets", editWidgets);
     controlCenter->setAction("screenshot", [screenshot] { screenshot->takePartialScreenshot(false); });

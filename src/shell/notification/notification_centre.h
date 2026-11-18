@@ -15,13 +15,13 @@
 #include "base/geometry.h"
 #include "base/signal.h"
 #include "base/timer.h"
+#include "render/glass.h"
 #include "shell/notification/notification.h"
 #include "shell/notification/notification_motion.h"
 #include "ui/view.h"
 #include "ui/window.h"
 
 namespace cutefish::ui {
-class Button;
 class Label;
 class ScrollView;
 } // namespace cutefish::ui
@@ -35,11 +35,11 @@ class NotificationCard;
 class NotificationHistory;
 class Shell;
 class ShellWindow;
+class DesktopWidgets;
 
-// The notification centre: the history in a
-// 380 px popup of the menu bar on PanelGlass, from 6 below the work
-// area's top to 6 above its bottom, under the item that opened it or 6 from
-// the output's right edge. Each application's notifications stack behind
+// The notification centre: a right-aligned column of independent glass cards,
+// with the notification history and widgets in a shared scroller.
+// Each application's notifications stack behind
 // its newest; a click fans the stack out under a header with "Show Less"
 // and a clear button, or shows a card's whole body. Cards fade out and the
 // gap closes before they leave the history. While it is open, new
@@ -49,7 +49,7 @@ class NotificationCentre
 public:
     static constexpr int kWidth = 380;
     static constexpr int kMargin = 6;
-    static constexpr double kRadius = 18;
+    static constexpr double kRadius = 22;
     static constexpr double kInset = 12;
     static constexpr double kHeaderHeight = 32;
     static constexpr double kPeekStep = 8;
@@ -66,10 +66,8 @@ public:
     NotificationCentre(const NotificationCentre &) = delete;
     NotificationCentre &operator=(const NotificationCentre &) = delete;
 
-    // Opens as a popup of `parent`, the menu bar on its output, with its
-    // left edge at `position.x` (global logical: the opening item's left
-    // inset), moved in to 6 px from the
-    // output's right edge where it would not fit.
+    // Opens on the right of the menu bar's output. The original anchor is
+    // retained so relayout can follow a changed work area or output.
     void open(ShellWindow *parent, const base::Point &position);
     void close();
     // Opens, or closes when open.
@@ -81,7 +79,6 @@ public:
     // Where it is, global logical, while open.
     base::Rect geometry() const { return m_geometry; }
     ShellWindow *shellWindow() const;
-    ClearButton *clearButton() const { return m_clear; }
     // The rows as the history holds them.
     // Views of the popup, there once it was first opened.
     const std::vector<Row *> &rows() const { return m_rows; }
@@ -94,7 +91,10 @@ public:
 
     // The layout pass, for tests: rows and headers move to their targets.
     void relayout();
-    std::function<void()> onEditWidgets;
+    void setWidgets(DesktopWidgets *widgets);
+    void setEditingWidgets(bool editing);
+    bool acceptsWidgetDrop(base::Point global) const;
+    PillButton *clearAllButton() const { return m_clearAll; }
 
 private:
     class Content;
@@ -109,6 +109,9 @@ private:
     void build(const Placement &placement);
     void destroyWindow();
     void applyGlass();
+    void updateGlass();
+    void requestColumnLayout();
+    void animatePanel(bool show);
     void onHidden();
     void retranslate();
 
@@ -141,13 +144,20 @@ private:
     base::Rect m_geometry;
     base::Rect m_placedGeometry;
     bool m_open = false;
+    bool m_editingWidgets = false;
+    bool m_glassDirty = true;
+    DesktopWidgets *m_widgetStore = nullptr;
     Content *m_content = nullptr;
     ui::Label *m_title = nullptr;
-    ClearButton *m_clear = nullptr;
     ui::ScrollView *m_scroll = nullptr;
     List *m_list = nullptr;
     ui::Label *m_empty = nullptr;
-    ui::Button *m_widgets = nullptr;
+    PillButton *m_edit = nullptr;
+    PillButton *m_close = nullptr;
+    PillButton *m_footerClose = nullptr;
+    PillButton *m_clearAll = nullptr;
+    ui::View *m_stack = nullptr;
+    std::unique_ptr<Tween> m_reveal;
 
     std::vector<Row *> m_rows;
     std::vector<GroupHeader *> m_headers;
@@ -214,6 +224,7 @@ public:
     void disarmUnless(ui::PointF windowPoint);
     // Puts the row and its content where the tweens are now.
     void place();
+    void appendGlass(render::GlassParams &glass, ui::Path &mask, ui::RectF viewport) const;
 
 private:
     class Content;

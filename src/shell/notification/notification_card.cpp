@@ -250,18 +250,22 @@ private:
     bool m_pressed = false;
 };
 
-NotificationCard::NotificationCard(ui::Window *window)
-    : m_surface(ui::Theme::current().background)
+static constexpr double kHistoryIconSize = 34;
+
+NotificationCard::NotificationCard(ui::Window *window, Layout layout)
+    : m_layout(layout)
+    , m_surface(ui::Theme::current().background)
     , m_progress(std::make_unique<Tween>(window, std::chrono::milliseconds(200), outCubic))
 {
     setTracksHover(true);
 
-    m_themeIcon = addChild<ui::ThemeIcon>(kFallbackIcon, kIconSize);
+    m_themeIcon = addChild<ui::ThemeIcon>(kFallbackIcon, m_layout == Layout::History ? kHistoryIconSize : kIconSize);
     m_fileIcon = addChild<ui::ImageView>();
     m_fileIcon->setFillMode(ui::ImageView::FillMode::PreserveAspectFit);
     m_fileIcon->setVisible(false);
 
     m_appName = addChild<ui::Label>();
+    m_appName->setVisible(m_layout == Layout::Banner);
     m_appName->setWeight(500);
     m_when = addChild<ui::Label>();
     m_when->setElide(ui::Label::Elide::None);
@@ -321,8 +325,9 @@ void NotificationCard::setNotification(const Notification &notification)
         m_themeIcon->setIconName(icon.empty() ? kFallbackIcon : icon);
 
     m_appName->setText(notification.appName);
-    m_title->setText(notification.summary);
-    m_title->setVisible(!notification.summary.empty());
+    const auto &title = m_layout == Layout::History && notification.summary.empty() ? notification.appName : notification.summary;
+    m_title->setText(title);
+    m_title->setVisible(!title.empty());
     updateBody();
     m_body->setVisible(!notification.body.empty());
 
@@ -432,16 +437,18 @@ NotificationCard::Geometry NotificationCard::computeGeometry(double width) const
 {
     const ui::Theme &theme = ui::Theme::current();
     Geometry g;
+    const bool history = m_layout == Layout::History;
     g.closeY = kPadding + (kHeaderHeight - m_close->buttonHeight()) / 2 - 3;
     g.closeX = width - g.closeY - m_close->currentWidth();
     g.headerWidth = g.closeX - theme.smallSpacing - kPadding;
 
     const bool thumbnail = showsThumbnail();
+    g.contentX = history ? kPadding + kHistoryIconSize + 12 : kPadding;
     g.thumbnailX = width - kPadding - kThumbnailSize;
-    g.contentWidth = (thumbnail ? g.thumbnailX - theme.largeSpacing : width - kPadding) - kPadding;
+    g.contentWidth = std::max(0., (thumbnail ? g.thumbnailX - theme.largeSpacing : width - kPadding) - g.contentX);
 
     // The Column: visible children, 2 apart.
-    const double top = kPadding + kHeaderHeight + theme.smallSpacing;
+    const double top = history ? kPadding : kPadding + kHeaderHeight + theme.smallSpacing;
     double y = top;
     bool first = true;
     const auto place = [&](double height) {
@@ -452,7 +459,7 @@ NotificationCard::Geometry NotificationCard::computeGeometry(double width) const
         y += height;
         return at;
     };
-    if (!m_notification.summary.empty())
+    if (m_title->isVisible())
         g.titleY = place(m_title->sizeHint().height);
     if (!m_notification.body.empty()) {
         g.bodyHeight = m_body->heightForWidth(g.contentWidth);
@@ -465,7 +472,8 @@ NotificationCard::Geometry NotificationCard::computeGeometry(double width) const
     g.contentBottom = y;
 
     g.thumbnailY = top + 2;
-    const double bottom = std::max(g.contentBottom, thumbnail ? g.thumbnailY + kThumbnailSize : 0.0);
+    const double bottom = std::max({g.contentBottom, thumbnail ? g.thumbnailY + kThumbnailSize : 0.0,
+                                    history ? kPadding + kHistoryIconSize : 0.0});
     if (!m_actions.empty())
         g.actionsY = bottom + theme.largeSpacing;
     g.height = bottom + (m_actions.empty() ? 0 : kActionHeight + theme.largeSpacing) + kPadding;
@@ -558,29 +566,37 @@ void NotificationCard::layout()
 
     m_close->setGeometry({g.closeX, g.closeY, m_close->currentWidth(), m_close->buttonHeight()});
 
-    // The caption, vertically centred in the header.
-    const double iconY = kPadding + (kHeaderHeight - kIconSize) / 2;
-    m_themeIcon->setGeometry({kPadding, iconY, kIconSize, kIconSize});
-    m_fileIcon->setGeometry({kPadding, iconY, kIconSize, kIconSize});
-    // Its width counts even with no time shown.
-    m_when->setText((m_notification.appName.empty() ? "" : "  ·  ") + m_timeText);
+    const bool history = m_layout == Layout::History;
+    const double iconSize = history ? kHistoryIconSize : kIconSize;
+    const double iconY = history ? kPadding : kPadding + (kHeaderHeight - kIconSize) / 2;
+    m_themeIcon->setGeometry({kPadding, iconY, iconSize, iconSize});
+    m_fileIcon->setGeometry({kPadding, iconY, iconSize, iconSize});
+    m_when->setText((history || m_notification.appName.empty() ? "" : "  ·  ") + m_timeText);
     const ui::SizeF when = m_when->sizeHint();
-    const ui::SizeF name = m_appName->sizeHint();
-    const double nameX = kPadding + kIconSize + theme.smallSpacing;
-    const double nameWidth = std::max(0.0, std::min(name.width, g.headerWidth - (nameX - kPadding) - when.width));
-    const double nameY = kPadding + (kHeaderHeight - name.height) / 2;
-    m_appName->setGeometry({nameX, nameY, nameWidth, name.height});
     m_when->setVisible(!m_timeText.empty());
-    m_when->setGeometry({nameX + nameWidth, nameY + m_appName->baselineOffset() - m_when->baselineOffset(),
-                         when.width, when.height});
+    double titleWidth = g.contentWidth;
+    if (history) {
+        const double right = m_close->isVisible() ? g.closeX - theme.smallSpacing : width - kPadding;
+        const double x = std::max(g.contentX, right - when.width);
+        m_when->setGeometry({x, kPadding + m_title->baselineOffset() - m_when->baselineOffset(), std::max(0., right - x), when.height});
+        if (m_when->isVisible())
+            titleWidth = std::min(titleWidth, std::max(0., x - theme.smallSpacing - g.contentX));
+    } else {
+        const ui::SizeF name = m_appName->sizeHint();
+        const double nameX = kPadding + kIconSize + theme.smallSpacing;
+        const double nameWidth = std::max(0.0, std::min(name.width, g.headerWidth - (nameX - kPadding) - when.width));
+        const double nameY = kPadding + (kHeaderHeight - name.height) / 2;
+        m_appName->setGeometry({nameX, nameY, nameWidth, name.height});
+        m_when->setGeometry({nameX + nameWidth, nameY + m_appName->baselineOffset() - m_when->baselineOffset(), when.width, when.height});
+    }
 
     if (g.titleY >= 0)
-        m_title->setGeometry({kPadding, g.titleY, g.contentWidth, m_title->sizeHint().height});
+        m_title->setGeometry({g.contentX, g.titleY, titleWidth, m_title->sizeHint().height});
     if (g.bodyY >= 0)
-        m_body->setGeometry({kPadding, g.bodyY, g.contentWidth, g.bodyHeight});
+        m_body->setGeometry({g.contentX, g.bodyY, g.contentWidth, g.bodyHeight});
     m_more->setVisible(g.moreY >= 0);
     if (g.moreY >= 0)
-        m_more->setGeometry({kPadding, g.moreY, g.contentWidth, m_more->sizeHint().height});
+        m_more->setGeometry({g.contentX, g.moreY, g.contentWidth, m_more->sizeHint().height});
 
     m_thumbnail->setVisible(showsThumbnail());
     m_thumbnail->setGeometry({g.thumbnailX, g.thumbnailY, kThumbnailSize, kThumbnailSize});
@@ -613,7 +629,7 @@ void NotificationCard::paint(ui::Painter &painter)
     }
 
     if (g.progressY >= 0) {
-        const ui::RectF track {kPadding, g.progressY + kProgressHeight - 4, g.contentWidth, 4};
+        const ui::RectF track {g.contentX, g.progressY + kProgressHeight - 4, g.contentWidth, 4};
         painter.drawSmoothRectangle(track, 2, controlTint(0));
         const double fill = track.width * m_progress->value();
         if (fill > 0)

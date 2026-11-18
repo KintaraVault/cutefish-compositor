@@ -188,6 +188,8 @@ public:
     base::Rect popupBounds() const;
     // The toolkit window and its root, the non-popup window it hangs from.
     ShellWindow *root();
+    // A shell popup may temporarily share the pointer with an editor.
+    void setPopupGrab(bool grab);
     // Unmaps the window and lets go of its toolkit window, which is being
     // hidden or destroyed: nothing reaches it from here on.
     void release();

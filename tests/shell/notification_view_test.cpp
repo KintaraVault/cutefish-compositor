@@ -435,9 +435,13 @@ TEST_F(NotificationViewTest, TheCentreOpensUnderTheBarAndTakesTheBanners)
     EXPECT_TRUE(window->isPopup());
     EXPECT_EQ(centre().geometry(), window->wmWindow()->bounds());
     EXPECT_TRUE(window->surface()->glass().enabled);
-    EXPECT_FLOAT_EQ(shell::glassFixed(6.0), window->surface()->glass().blurSigma);
-    EXPECT_FLOAT_EQ(shell::glassFixed(1.2), window->surface()->glass().saturation);
-    EXPECT_EQ(18, window->surface()->backgroundBlurRadius());
+    EXPECT_FLOAT_EQ(shell::glassFixed(12.0), window->surface()->glass().blurSigma);
+    EXPECT_EQ(22, window->surface()->backgroundBlurRadius());
+    EXPECT_FALSE(window->surface()->backgroundBlurShape().isEmpty());
+    EXPECT_GE(window->surface()->glass().lenses.size(), 2u);
+    EXPECT_GT(window->wmWindow()->presentationOffset().x(), 0);
+    frames(300);
+    EXPECT_EQ(base::Point(), window->wmWindow()->presentationOffset());
 
     // The banner went into the history, where the centre shows it.
     frames();
@@ -451,14 +455,14 @@ TEST_F(NotificationViewTest, TheCentreOpensUnderTheBarAndTakesTheBanners)
     frames();
     EXPECT_EQ(2u, centre().rows().size());
 
-    // A left edge further in is kept.
+    // The column stays right-aligned even if the bar item is further left.
     centre().close();
     frames();
     EXPECT_FALSE(centre().isOpen());
     EXPECT_FALSE(notifications->banners().bannersSuppressed());
     centre().open(menuBar.get(), base::Point(900, kMenuBar));
     frames();
-    EXPECT_EQ(900, centre().geometry().x());
+    EXPECT_EQ(1054, centre().geometry().x());
 
     // Escape closes it, as does a press outside.
     key(KEY_ESC);
@@ -497,7 +501,7 @@ TEST_F(NotificationViewTest, TheCentreStacksEachApplicationAndFansItOut)
     EXPECT_DOUBLE_EQ(card + 16 + 9, rows[0]->targetHeight());
     EXPECT_DOUBLE_EQ(card + 16 + 9, rows[3]->targetY());
     EXPECT_EQ(4, centre().liveCount());
-    EXPECT_TRUE(centre().clearButton()->isVisible());
+    EXPECT_TRUE(centre().clearAllButton()->isVisible());
 
     // A click on the stack fans it out under a header.
     const base::Point origin = centre().geometry().topLeft();
@@ -599,19 +603,15 @@ TEST_F(NotificationViewTest, TheCentreDismissesAfterTheCardsFade)
     click(origin.x() + 190, origin.y() + 20);
     EXPECT_FALSE(stackClose->isArmed());
 
-    // The header's clear button: arm, then clear everything.
-    const base::PointF clear = centreOf(centre().clearButton(), origin);
+    // The explicit list footer clears everything with one click.
+    const base::PointF clear = centreOf(centre().clearAllButton(), origin);
     click(clear.x(), clear.y());
-    EXPECT_TRUE(centre().clearButton()->isArmed());
-    frames(300);
-    const base::PointF armed = centreOf(centre().clearButton(), origin);
-    click(armed.x(), armed.y());
     test::runFor(std::chrono::milliseconds(700));
     frames();
     EXPECT_EQ(0, notifications->history().count());
     EXPECT_TRUE(centre().rows().empty());
     EXPECT_EQ(0, centre().liveCount());
-    EXPECT_FALSE(centre().clearButton()->isVisible());
+    EXPECT_FALSE(centre().clearAllButton()->isVisible());
 }
 
 TEST_F(NotificationViewTest, ClosingCommitsPendingRemovalsAndFoldsGroups)

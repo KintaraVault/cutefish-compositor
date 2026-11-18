@@ -498,6 +498,14 @@ void ShellSurface::grab(const void *client)
     m_manager->pushPopupGrab(this);
 }
 
+void ShellSurface::ungrab()
+{
+    if (!m_hasGrab)
+        return;
+    m_hasGrab = false;
+    m_manager->removePopupGrab(this);
+}
+
 void ShellSurface::reposition(const base::Rect &bounds)
 {
     if (m_role != Role::Popup)

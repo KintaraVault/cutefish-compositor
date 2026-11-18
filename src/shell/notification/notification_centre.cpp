@@ -4,8 +4,6 @@
 
 #include "shell/notification/notification_centre.h"
 
-#include "ui/button.h"
-
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -19,14 +17,17 @@
 #include "shell/shell_data.h"
 #include "shell/shell_host.h"
 #include "shell/shell_window.h"
+#include "shell/widgets/desktop_widgets.h"
 #include "ui/application.h"
 #include "ui/embedded_window.h"
+#include "ui/geometry_conversions.h"
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/painter.h"
+#include "ui/popup_glass.h"
+#include "wm/window.h"
 #include "ui/scroll_view.h"
 #include "ui/theme.h"
-#include "toolkit/compositor_colors.h"
 
 using cutefish::i18n::tr;
 using cutefish::i18n::trn;
@@ -36,7 +37,8 @@ namespace cutefish::shell {
 // PanelStyle.tileColor: the cards' plates.
 static ui::Color cardColor()
 {
-    return ui::color(toolkit::CompositorColor::NotificationCentreCard);
+    return ui::Theme::current().darkMode ? ui::Color::rgb(0x202023).withAlpha(.52)
+                                         : ui::Color::rgb(0xffffff).withAlpha(.46);
 }
 
 // PanelStyle.tileInkColor: what the cards read as, opaque, for their ink.
@@ -110,12 +112,6 @@ class CardFrame : public ui::View
 {
 public:
     CardFrame() { setClipsChildren(true); }
-
-protected:
-    void paint(ui::Painter &painter) override
-    {
-        painter.drawRoundedRect(localRect(), {NotificationCentre::kRadius, 0, ui::themeCorners()}, cardColor());
-    }
 };
 
 NotificationCentre::Row::Row(NotificationCentre *centre, ui::Window *window)
@@ -129,7 +125,7 @@ NotificationCentre::Row::Row(NotificationCentre *centre, ui::Window *window)
 {
     m_content = addChild<Content>(this);
     m_frame = m_content->addChild<CardFrame>();
-    m_card = m_frame->addChild<NotificationCard>(window);
+    m_card = m_frame->addChild<NotificationCard>(window, NotificationCard::Layout::History);
     m_card->setSurfaceColor(cardInkColor());
     for (auto &peek : m_peeks) {
         peek = std::make_unique<Tween>(window);
@@ -285,6 +281,35 @@ void NotificationCentre::Row::placeContent()
     m_frame->setGeometry({0, 0, width, m_frameHeight.value()});
     m_card->setGeometry({0, 0, width, m_card->implicitHeight(width)});
     m_content->requestPaint();
+    m_centre->updateGlass();
+}
+
+static void appendLens(render::GlassParams &glass, ui::Path &mask, ui::RectF body, double radius,
+                       std::optional<ui::RectF> clip = {}, double opacity = 1)
+{
+    if (body.width <= 0 || body.height <= 0 || opacity <= 0 || (clip && !ui::toBase(body).intersects(ui::toBase(*clip))))
+        return;
+    ui::Path piece;
+    piece.addRoundedRect(body, radius, radius);
+    // The lens shader clips to the viewport; clip the shadow path too.
+    if (clip && (!clip->contains(body.topLeft()) || !clip->contains({body.right(), body.bottom()}))) {
+        ui::Path viewport;
+        viewport.addRect(*clip);
+        piece = piece.intersected(viewport);
+    }
+    if (piece.isEmpty())
+        return;
+    mask.addPath(piece);
+    glass.lenses.push_back({ui::toBase(body), radius, -1, float(opacity),
+                            clip ? std::optional(ui::toBase(*clip)) : std::nullopt});
+}
+
+void NotificationCentre::Row::appendGlass(render::GlassParams &glass, ui::Path &mask, ui::RectF viewport) const
+{
+    const double scale = m_scale.value();
+    auto origin = m_frame->mapToWindow({0, 0});
+    appendLens(glass, mask, {origin.x, origin.y, kCardWidth * scale, frameHeight() * scale},
+               kRadius * scale, viewport, contentOpacity());
 }
 
 // ---------------------------------------------------------------------------
@@ -394,14 +419,38 @@ public:
             if (parent())
                 parent()->requestLayout();
             requestLayout();
+            m_centre->requestColumnLayout();
         };
     }
 
     void setTargetBottom(double bottom) { m_bottom.setTarget(bottom, m_centre->m_motion); }
     double bottom() const { return m_bottom.value(); }
 
-    double heightForWidth(double) const override { return m_bottom.value() + ui::Theme::current().largeSpacing; }
+    double heightForWidth(double) const override
+    {
+        const auto widgets = m_centre->m_stack ? m_centre->m_stack->heightForWidth(kCardWidth) : 0;
+        return m_bottom.value() + (widgets > 0 ? widgets + 8 : 0)
+                + (m_centre->m_clearAll->isVisible() ? 46 : m_centre->m_empty->isVisible() ? 42 : 0) + 6;
+    }
     ui::SizeF sizeHint() const override { return {0, heightForWidth(0)}; }
+
+protected:
+    void layout() override
+    {
+        double y = bottom();
+        if (auto *clear = m_centre->m_clearAll; clear->isVisible()) {
+            const double width = clear->preferredWidth();
+            clear->setGeometry({kWidth - kInset - width, y + 3, width, 26});
+            y += 46;
+        }
+        if (auto *empty = m_centre->m_empty; empty->isVisible()) {
+            empty->setGeometry({kInset, y + 5, kCardWidth, 30});
+            y += 42;
+        }
+        if (auto *stack = m_centre->m_stack)
+            stack->setGeometry({kInset, y + 8, kCardWidth, stack->heightForWidth(kCardWidth)});
+        m_centre->updateGlass();
+    }
 
 private:
     NotificationCentre *m_centre;
@@ -419,46 +468,40 @@ public:
 protected:
     void layout() override
     {
-        const ui::Theme &theme = ui::Theme::current();
         const double width = geometry().width;
-        const double top = theme.largeSpacing;
-        ClearButton *clear = m_centre->m_clear;
-        const double clearWidth = clear->currentWidth();
-        const double clearX = width - kInset - clearWidth;
-        clear->setGeometry({clearX, top + (kHeaderHeight - clear->buttonHeight()) / 2, clearWidth,
-                            clear->buttonHeight()});
-
-        ui::Label *title = m_centre->m_title;
-        // The status panels' title size.
-        title->setFontSize(10.5 * 4 / 3);
-        const ui::SizeF size = title->sizeHint();
-        title->setGeometry({kInset, top + (kHeaderHeight - size.height) / 2,
-                            std::max(0.0, clearX - theme.largeSpacing - kInset), size.height});
-
-        const double listTop = top + kHeaderHeight + theme.largeSpacing;
-        const bool widgets = m_centre->m_widgets != nullptr;
-        const ui::RectF list {0, listTop, width, std::max(0.0, geometry().height - listTop - (widgets ? 52 : 0))};
-        if (widgets)
-            m_centre->m_widgets->setGeometry({(width - 136) / 2, geometry().height - 44, 136, 32});
-        m_centre->m_scroll->setGeometry(list);
-
-        ui::Label *empty = m_centre->m_empty;
-        empty->setFontSize(13.0 * 4 / 3);
-        empty->setColor(ui::color(toolkit::CompositorColor::NotificationCentreEmptyText));
-        const ui::SizeF emptySize = empty->sizeHint();
-        empty->setGeometry({list.x + (list.width - emptySize.width) / 2,
-                            list.y + (list.height - emptySize.height) / 2, emptySize.width, emptySize.height});
+        const bool hasCards = m_centre->m_liveCount > 0;
+        const double top = 8;
+        m_centre->m_title->setVisible(hasCards);
+        m_centre->m_title->setGeometry({kInset, top, kCardWidth - 36, kHeaderHeight});
+        m_centre->m_close->setVisible(hasCards);
+        m_centre->m_close->setGeometry({width - kInset - 23, top + 4, 23, 23});
+        const double listTop = hasCards ? top + kHeaderHeight + 3 : top + 6;
+        const double listHeight = std::clamp(m_centre->m_list->heightForWidth(width), 0.,
+                                             std::max(0., geometry().height - listTop - 38));
+        m_centre->m_scroll->setGeometry({0, listTop, width, listHeight});
+        const double editWidth = m_centre->m_edit->preferredWidth();
+        const bool footerClose = m_centre->m_edit->isVisible() && m_centre->m_stack
+                && m_centre->m_stack->heightForWidth(kCardWidth) > 0
+                && listHeight >= m_centre->m_list->heightForWidth(width);
+        const double editX = (width - editWidth - (footerClose ? 34 : 0)) / 2;
+        const double editY = listTop + listHeight + 2;
+        m_centre->m_footerClose->setVisible(footerClose);
+        m_centre->m_footerClose->setGeometry({editX + editWidth + 8, editY, 26, 26});
+        m_centre->m_edit->setGeometry({editX, editY, editWidth, 26});
+        m_centre->updateGlass();
     }
 
     void paint(ui::Painter &) override
     {
         const uint64_t generation = ui::Theme::generation();
-        if (generation == m_theme)
-            return;
-        m_theme = generation;
-        m_centre->applyGlass();
-        for (Row *row : m_centre->m_rows)
-            row->card()->setSurfaceColor(cardInkColor());
+        if (generation != m_theme) {
+            m_theme = generation;
+            m_centre->m_glassDirty = true;
+            for (Row *row : m_centre->m_rows)
+                row->card()->setSurfaceColor(cardInkColor());
+        }
+        if (m_centre->m_glassDirty)
+            m_centre->applyGlass();
     }
 
 private:
@@ -520,7 +563,7 @@ ShellWindow *NotificationCentre::shellWindow() const
     return m_shell->host()->windowFor(static_cast<ui::EmbeddedWindow *>(m_window.get()));
 }
 
-NotificationCentre::Placement NotificationCentre::placementFor(ShellWindow *parent, const base::Point &position) const
+NotificationCentre::Placement NotificationCentre::placementFor(ShellWindow *parent, const base::Point &) const
 {
     Placement placement;
     placement.parent = parent;
@@ -529,9 +572,7 @@ NotificationCentre::Placement NotificationCentre::placementFor(ShellWindow *pare
         return placement;
     const base::Rect screen = output->bounds;
     const base::Rect area = m_shell->workArea(*output);
-    int x = position.x();
-    if (x + kWidth >= screen.x() + screen.width())
-        x = screen.x() + screen.width() - kWidth - kMargin;
+    const int x = screen.right() - kWidth - kMargin;
     placement.geometry = base::Rect(x, area.y() + kMargin, kWidth, area.height() - kMargin * 2);
     return placement;
 }
@@ -567,7 +608,16 @@ void NotificationCentre::open(ShellWindow *parent, const base::Point &position)
     m_history.updateTime();
     m_scroll->setScrollPosition({0, 0});
     m_window->show();
+    if (auto *window = shellWindow()) {
+        window->setInputRegion(std::nullopt);
+        window->setPopupGrab(!m_editingWidgets);
+    }
     applyGlass();
+    if (m_reveal->value() == 0 && shellWindow() && shellWindow()->wmWindow()) {
+        shellWindow()->wmWindow()->setPresentationOffset({42, 0});
+        shellWindow()->wmWindow()->setOpacity(0);
+    }
+    animatePanel(true);
     m_timeTimer.start();
     openChanged();
 }
@@ -578,11 +628,75 @@ void NotificationCentre::close()
         return;
     m_open = false;
     m_timeTimer.stop();
-    if (m_window)
-        m_window->hide();
+    animatePanel(false);
     onHidden();
     m_banners.setBannersSuppressed(false);
     openChanged();
+}
+
+void NotificationCentre::animatePanel(bool show)
+{
+    auto *host = m_shell->host()->windowFor(static_cast<ui::EmbeddedWindow *>(m_window.get()));
+    if (!host || !host->isShown())
+        return;
+    if (!show) {
+        host->setPopupGrab(false);
+        host->setInputRegion(base::Region());
+        if (m_reveal->value() == 0) {
+            m_reveal->snap(0);
+            m_window->hide();
+            return;
+        }
+    }
+    m_reveal->setDuration(std::chrono::milliseconds(show ? 270 : 180));
+    m_reveal->setTarget(show ? 1 : 0, true);
+}
+
+void DesktopWidgets::setNotificationCentre(NotificationCentre &centre)
+{
+    centre.setWidgets(this);
+}
+
+void NotificationCentre::setWidgets(DesktopWidgets *widgets)
+{
+    m_widgetStore = widgets;
+    if (!widgets)
+        return;
+    widgets->m_centreEditing = [this, alive = std::weak_ptr<bool>(m_alive)](bool editing) {
+        if (const auto guard = alive.lock(); guard && *guard)
+            setEditingWidgets(editing);
+    };
+    widgets->m_centreDrop = [this, alive = std::weak_ptr<bool>(m_alive)](base::Point point) {
+        const auto guard = alive.lock();
+        return guard && *guard && acceptsWidgetDrop(point);
+    };
+    widgets->m_centreOpen = [this, alive = std::weak_ptr<bool>(m_alive)] {
+        const auto guard = alive.lock();
+        return guard && *guard && m_open;
+    };
+}
+
+void NotificationCentre::setEditingWidgets(bool editing)
+{
+    m_editingWidgets = editing;
+    if (auto *window = shellWindow()) {
+        window->setPopupGrab(!editing);
+        m_edit->setEnabled(!editing);
+        m_edit->setVisible(m_widgetStore && !editing);
+        m_content->requestLayout();
+        if (editing && m_stack)
+            m_scroll->ensureVisible({0, m_stack->geometry().y, 1, std::min(170., m_scroll->geometry().height)});
+        updateGlass();
+    }
+}
+
+bool NotificationCentre::acceptsWidgetDrop(base::Point global) const
+{
+    if (!m_open || !m_editingWidgets)
+        return false;
+    const auto p = global - m_geometry.topLeft();
+    return p.x() >= kInset && p.x() < kWidth - kInset && p.y() >= m_scroll->geometry().y
+            && p.y() < m_geometry.height();
 }
 
 void NotificationCentre::onHidden()
@@ -610,7 +724,9 @@ void NotificationCentre::retranslate()
     if (!m_window)
         return;
     m_title->setText(tr("Notification Center"));
-    m_empty->setText(tr("No Notifications"));
+    m_empty->setText(tr("No recent notifications"));
+    m_edit->setText(tr("Edit Widgets"));
+    m_clearAll->setText(tr("Clear All Notifications"));
     for (GroupHeader *header : m_headers)
         header->retranslate();
     m_history.updateTime();
@@ -624,11 +740,12 @@ void NotificationCentre::destroyWindow()
     m_headers.clear();
     m_content = nullptr;
     m_title = nullptr;
-    m_clear = nullptr;
     m_scroll = nullptr;
     m_list = nullptr;
     m_empty = nullptr;
-    m_widgets = nullptr;
+    m_edit = m_close = m_footerClose = m_clearAll = nullptr;
+    m_stack = nullptr;
+    m_reveal.reset();
     m_window.reset();
     m_parent = nullptr;
 }
@@ -647,25 +764,57 @@ void NotificationCentre::build(const Placement &placement)
     popup.flipX = popup.flipY = popup.slide = false;
     m_window = ui::Window::createPopup(m_parent->window(), popup, true);
     ui::Window *window = m_window.get();
+    ui::PopupGlass::prepare(*window);
+    m_reveal = std::make_unique<Tween>(window);
+    m_reveal->onChanged = [this] {
+        auto *host = m_shell->host()->windowFor(static_cast<ui::EmbeddedWindow *>(m_window.get()));
+        if (host && host->wmWindow()) {
+            const double t = m_reveal->value();
+            host->wmWindow()->setPresentationOffset({int(std::round(42 * (1 - t))), 0});
+            host->wmWindow()->setOpacity(float(t));
+        }
+    };
+    m_reveal->onFinished = [this] {
+        if (!m_open)
+            m_window->hide();
+    };
 
     auto content = std::make_unique<Content>(this);
     m_content = content.get();
     m_title = content->addChild<ui::Label>(tr("Notification Center"));
-    m_clear = content->addChild<ClearButton>(window, ClearButton::Kind::Clear);
-    m_clear->onClicked = [this] { dismissRows([](const Row &) { return true; }); };
-    m_clear->onWidthChanged = [this] { m_content->requestLayout(); };
+    m_title->setFontSize(15);
+    m_title->setWeight(650);
+    m_title->setColor(ui::Color::rgb(0xffffff));
+    m_close = content->addChild<PillButton>("×");
+    m_close->onClicked = [this] { close(); };
+    m_footerClose = content->addChild<PillButton>("×");
+    m_footerClose->onClicked = [this] { close(); };
     m_scroll = content->addChild<ui::ScrollView>();
     m_scroll->setElastic(false);
-    m_scroll->setBottomCornerRadius(kRadius);
+    m_scroll->setVerticalBarPolicy(ui::ScrollView::BarPolicy::AlwaysOff);
+    m_scroll->onScrolled = [this] { updateGlass(); };
     m_list = m_scroll->setContent<List>(this, window);
-    m_empty = content->addChild<ui::Label>(tr("No Notifications"));
+    m_clearAll = m_list->addChild<PillButton>(tr("Clear All Notifications"));
+    m_clearAll->setName("clear-all-notifications");
+    m_clearAll->onClicked = [this] { dismissRows([](const Row &) { return true; }); };
+    m_empty = m_list->addChild<ui::Label>(tr("No recent notifications"));
     m_empty->setElide(ui::Label::Elide::None);
-    if (onEditWidgets) {
-        m_widgets = content->addChild<ui::Button>(tr("Edit Widgets"));
-        m_widgets->onClicked = [this] {
-            close();
-            onEditWidgets();
+    m_empty->setTextAlignment(ui::Label::TextAlignment::Center);
+    m_empty->setColor(ui::Color::rgb(0xffffff));
+    m_empty->setWeight(650);
+    m_edit = content->addChild<PillButton>(tr("Edit Widgets"));
+    m_edit->setName("edit-widgets");
+    m_edit->setVisible(m_widgetStore && !m_editingWidgets);
+    if (m_widgetStore) {
+        m_edit->onClicked = [this] { m_widgetStore->edit(true); };
+        auto *stack = m_list->addChild<DesktopWidgets::Stack>(*m_widgetStore);
+        stack->onChanged = [this] {
+            m_content->requestLayout();
+            m_list->requestLayout();
+            m_scroll->requestLayout();
+            updateGlass();
         };
+        m_stack = stack;
     }
     m_window->setContentView(std::move(content));
     m_window->resize({double(m_geometry.width()), double(m_geometry.height())});
@@ -680,12 +829,42 @@ void NotificationCentre::build(const Placement &placement)
 
 void NotificationCentre::applyGlass()
 {
-    ShellWindow *window = shellWindow();
+    m_glassDirty = false;
+    auto *window = m_shell->host()->windowFor(static_cast<ui::EmbeddedWindow *>(m_window.get()));
     if (!window)
         return;
     const bool dark = ui::Theme::current().darkMode;
-    window->setBackgroundBlur(base::Rect(0, 0, m_geometry.width(), m_geometry.height()), int(kRadius),
-                              dark ? popupGlass(0.17, 0.17, 0.19, 0.6) : popupGlass(1, 1, 1, 0.6));
+    auto glass = dark ? popupGlass(.10, .10, .10, .57) : popupGlass(1, 1, 1, .55);
+    glass.blurSigma = 12;
+    glass.displacement = 8;
+    glass.chroma = 0;
+    glass.rim = .66f;
+    glass.backdropReflection = .8f;
+    ui::Path mask;
+    const auto viewport = m_scroll->geometry();
+    for (auto row = m_rows.rbegin(); row != m_rows.rend(); ++row)
+        (*row)->appendGlass(glass, mask, viewport);
+    if (m_stack)
+        static_cast<DesktopWidgets::Stack *>(m_stack)->appendGlass(glass, mask, viewport);
+    for (auto *button : {m_close, m_footerClose, m_edit, m_clearAll}) {
+        const auto at = button->mapToWindow({0, 0});
+        if (button->isVisible())
+            appendLens(glass, mask, {at.x, at.y, button->geometry().width, button->geometry().height},
+                       button->geometry().height / 2, button == m_clearAll ? std::optional(viewport) : std::nullopt);
+    }
+    window->setBackgroundBlur(mask.isEmpty() ? base::Rect() : base::Rect({}, m_geometry.size()), int(kRadius), glass, mask);
+}
+
+void NotificationCentre::updateGlass()
+{
+    m_glassDirty = true;
+    if (m_content)
+        m_content->requestPaint();
+}
+
+void NotificationCentre::requestColumnLayout()
+{
+    m_content->requestLayout();
 }
 
 // --- The model's rows -------------------------------------------------------
@@ -864,10 +1043,10 @@ void NotificationCentre::layoutPass()
     m_list->setTargetBottom(y);
     m_scroll->requestLayout();
     m_liveCount = liveTotal;
-    m_clear->setVisible(liveTotal > 0);
-    if (!m_clear->isVisible())
-        m_clear->reset();
+    m_clearAll->setVisible(liveTotal > 1 || (liveTotal == 1 && (!m_stack || !m_stack->heightForWidth(kCardWidth))));
     m_empty->setVisible(liveTotal == 0);
+    m_content->requestLayout();
+    m_list->requestLayout();
 }
 
 NotificationCentre::GroupHeader *NotificationCentre::headerFor(const std::string &key)
@@ -973,7 +1152,6 @@ void NotificationCentre::disarmClears(std::optional<ui::PointF> windowPoint)
     if (!m_window)
         return;
     const ui::PointF point = windowPoint.value_or(ui::PointF {-1e9, -1e9});
-    m_clear->disarmUnless(point);
     for (Row *row : m_rows)
         row->disarmUnless(point);
     for (GroupHeader *header : m_headers)

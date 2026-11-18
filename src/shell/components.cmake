@@ -185,8 +185,11 @@ target_link_libraries(cutefish-shell-controlcenter PUBLIC cutefish-shell cutefis
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-controlcenter)
 add_library(cutefish-shell-widgets STATIC
     src/shell/widgets/desktop_widgets.cpp
-    src/shell/widgets/desktop_widgets.h)
-target_link_libraries(cutefish-shell-widgets PUBLIC cutefish-shell-controlcenter PRIVATE PkgConfig::TitleText)
+    src/shell/widgets/desktop_widgets.h
+    src/shell/widgets/widget_weather.cpp
+    src/shell/widgets/widget_weather.h)
+target_link_libraries(cutefish-shell-widgets PUBLIC cutefish-shell-controlcenter PRIVATE PkgConfig::TitleText PkgConfig::MediaCurl)
+target_link_libraries(cutefish-shell-notification-view PUBLIC cutefish-shell-widgets)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-widgets)
 # The menu bar's items, which the lock screen shows too.
 add_library(cutefish-shell-bar-items STATIC

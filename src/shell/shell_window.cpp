@@ -363,6 +363,19 @@ void ShellWindow::setBackgroundBlur(const base::Rect &rect, int radius,
         commit();
 }
 
+void ShellWindow::setPopupGrab(bool grab)
+{
+    if (!isPopup() || m_grab == grab)
+        return;
+    m_grab = grab;
+    if (!m_shown)
+        return;
+    if (grab)
+        m_shellSurface->grab();
+    else
+        m_shellSurface->ungrab();
+}
+
 void ShellWindow::show()
 {
     if (m_shown || m_size.isEmpty() || !m_window)

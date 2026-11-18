@@ -32,11 +32,17 @@
 #include "shell/controlcenter/control_center.h"
 #include "shell/controlcenter/control_layout.h"
 #include "shell/widgets/desktop_widgets.h"
+#include "shell/widgets/widget_weather.h"
 #include "shell/controlcenter/control_center_view.h"
 #include "shell/controlcenter/level_slider.h"
 #include "shell/controlcenter/power_dialog.h"
 #include "shell/controlcenter/status_panel.h"
 #include "shell/controlcenter/tiles.h"
+#include "shell/notification/notification_centre.h"
+#include "shell/notification/notification_controls.h"
+#include "shell/notification/notification_models.h"
+#include "shell/notification/notification_ui.h"
+#include "shell/notification/notifications.h"
 #include "shell/osd/level_track.h"
 #include "shell/shell.h"
 #include "shell/shell_data.h"
@@ -384,6 +390,12 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     previewDock->setFocusPolicy(wm::FocusPolicy::NoFocus);
     auto *widgets = shell->addComponent(std::make_unique<shell::DesktopWidgets>(
             shell.get(), *center, directory.filePath("desktop-widgets.conf")));
+    auto history = std::make_unique<shell::Notifications>(shell->bus(), shell->applications(), &shell->tasks(),
+            shell::Notifications::Files {directory.filePath("preview.conf"), directory.filePath("history"),
+                                         directory.filePath("images")});
+    auto *notificationHistory = &history->history();
+    auto *notifications = shell->addComponent(std::make_unique<shell::NotificationUi>(shell.get(), std::move(history)));
+    widgets->setNotificationCentre(notifications->centre());
 
     auto gpu = render::EglRendererTestAccess::create();
     ASSERT_TRUE(gpu);
@@ -484,10 +496,24 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     center->closePanels();
     test::runFor(std::chrono::milliseconds(25));
     capture("-widgets");
+    shell::Notification message;
+    message.id = 1;
+    message.appName = "Koifish";
+    message.summary = "Build complete";
+    message.body = "The widgets are ready to use.";
+    message.created = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    notificationHistory->add(message);
+    notifications->centre().open(bar.get(), {output.right() - 120, kMenuBar});
+    capture("-notification-centre-start");
+    test::runFor(std::chrono::milliseconds(300));
+    capture("-notification-centre");
     widgets->edit();
     capture("-widget-gallery-start");
     test::runFor(std::chrono::milliseconds(410));
     capture("-widget-gallery");
+    widgets->done();
+    notifications->centre().close();
     cleanup();
 }
 
@@ -1405,15 +1431,101 @@ TEST_F(ControlCenterTest, WidgetGalleryRisesFromTheScreenEdgeAndSearches)
     frames(std::chrono::milliseconds(60));
     EXPECT_EQ(5, countWidgets());
     key(KEY_ESC);
-    test::runFor(std::chrono::milliseconds(15));
+    frames(std::chrono::milliseconds(260));
     EXPECT_EQ(nullptr, locate());
     widgets.edit();
     frames(std::chrono::milliseconds(390));
     ASSERT_NE(nullptr, locate());
     const auto reopened = locate()->geometry();
     click(reopened.right() - 68, reopened.bottom() - 30);
-    test::runFor(std::chrono::milliseconds(15));
+    frames(std::chrono::milliseconds(260));
     EXPECT_EQ(nullptr, locate());
+}
+
+TEST_F(ControlCenterTest, TheGalleryPlacesIndependentWidgetsInNotificationCenter)
+{
+    auto history = std::make_unique<shell::Notifications>(shell->bus(), shell->applications(), &shell->tasks(),
+            shell::Notifications::Files {directory.filePath("notifications.conf"), directory.filePath("history"),
+                                         directory.filePath("images")});
+    auto *notifications = shell->addComponent(std::make_unique<shell::NotificationUi>(shell.get(), std::move(history)));
+    auto &column = notifications->centre();
+    const auto file = directory.filePath("shared-gallery.conf");
+    auto widgets = std::make_unique<shell::DesktopWidgets>(shell.get(), *center, file);
+    widgets->setNotificationCentre(column);
+    column.open(bar.get(), {1320, kMenuBar});
+    frames(std::chrono::milliseconds(310));
+    ASSERT_NE(nullptr, column.shellWindow());
+    auto *view = column.shellWindow()->window()->contentView();
+    const auto find = [](ui::View *root, const std::string &name, const auto &self) -> ui::View * {
+        if (root->name() == name)
+            return root;
+        for (const auto &child : root->children())
+            if (auto *match = self(child.get(), name, self))
+                return match;
+        return nullptr;
+    };
+    auto *stack = find(view, "notification-widgets", find);
+    auto *edit = find(view, "edit-widgets", find);
+    ASSERT_NE(nullptr, stack);
+    ASSERT_NE(nullptr, edit);
+    ASSERT_EQ(3u, stack->children().size());
+    auto clickInColumn = [&](ui::View *target, ui::PointF point) {
+        const auto at = target->mapToWindow(point);
+        const auto origin = column.geometry().topLeft();
+        click(int(origin.x() + at.x), int(origin.y() + at.y));
+    };
+    clickInColumn(edit, {edit->geometry().width / 2, edit->geometry().height / 2});
+    frames(std::chrono::milliseconds(405));
+    ASSERT_TRUE(column.isOpen());
+    shell::ShellWindow *gallery = nullptr;
+    for (auto *window : shell->windows())
+        if (window->isShown() && window->window()->contentView()
+            && find(window->window()->contentView(), "widget-search", find))
+            gallery = window;
+    ASSERT_NE(nullptr, gallery);
+    ASSERT_FALSE(edit->isVisible());
+    const auto bounds = gallery->geometry();
+    press(bounds.x() + 314, bounds.y() + 255);
+    move(column.geometry().right() - 110, column.geometry().y() + 300);
+    release();
+    frames(std::chrono::milliseconds(60));
+    ASSERT_EQ(4u, stack->children().size());
+    ASSERT_EQ(3, std::ranges::count_if(manager.windows(), [](const auto *window) {
+        return window->role() == wm::WindowRole::DesktopWidget && window->isVisible();
+    }));
+    click(bounds.x() + 314, bounds.y() + 255);
+    frames(std::chrono::milliseconds(60));
+    EXPECT_EQ(5u, stack->children().size());
+    key(KEY_ESC);
+    frames(std::chrono::milliseconds(260));
+    EXPECT_TRUE(edit->isVisible());
+    ASSERT_TRUE(column.isOpen());
+    base::Settings saved(file);
+    EXPECT_EQ(8, saved.intValue("Widgets/count"));
+    EXPECT_TRUE(saved.boolValue("Widgets/6-inCentre"));
+    EXPECT_TRUE(saved.boolValue("Widgets/7-inCentre"));
+    column.close();
+    frames(std::chrono::milliseconds(225));
+}
+
+TEST(WidgetWeatherTest, ValidatesCoordinatesAndDecodesSixHoursOffline)
+{
+    using namespace cutefish::shell::widget_weather;
+    const auto location = coordinates(" 21.03, -105.85 ");
+    ASSERT_TRUE(location);
+    EXPECT_DOUBLE_EQ(location->latitude, 21.03);
+    EXPECT_DOUBLE_EQ(location->longitude, -105.85);
+    for (const auto *bad : {"City", "91,0", "0,181", "NaN,0", "0,1,2", "0,1foo", " ,1"})
+        EXPECT_FALSE(coordinates(bad)) << bad;
+    EXPECT_FALSE(parse(R"({"current":{"temperature_2m":23,"weather_code":3}})"));
+    const auto forecast = parse(R"({"current":{"temperature_2m":23.2,"weather_code":3},"hourly":{
+        "time":["2026-11-18T17:00","2026-11-18T18:00","2026-11-18T19:00","2026-11-18T20:00","2026-11-18T21:00","2026-11-18T22:00"],
+        "temperature_2m":[23,22,21,20,19,18],"weather_code":[3,3,3,3,3,0]}})");
+    ASSERT_TRUE(forecast);
+    EXPECT_EQ(23, forecast->temperature);
+    EXPECT_EQ("22:00", forecast->hours.back().time);
+    EXPECT_EQ(18, forecast->hours.back().temperature);
+    EXPECT_EQ(0, forecast->hours.back().code);
 }
 
 // The real bar opening the panels with clicks on its items, as live.

@@ -235,6 +235,7 @@ public:
     // `client` identifies the client taking the grab and is only compared;
     // null is the shell's own menus.
     void grab(const void *client = nullptr);
+    void ungrab();
 
     const void *grabClient() const { return m_grabClient; }
 

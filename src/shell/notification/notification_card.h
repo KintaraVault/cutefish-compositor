@@ -39,7 +39,8 @@ public:
     static constexpr double kActionHeight = 30;
     static constexpr int kMaxActions = 3;
 
-    explicit NotificationCard(ui::Window *window);
+    enum class Layout { Banner, History };
+    explicit NotificationCard(ui::Window *window, Layout layout = Layout::Banner);
     ~NotificationCard() override;
 
     // Its icon, names, text, picture, progress and actions.
@@ -90,6 +91,7 @@ private:
 
     struct Geometry {
         double headerWidth = 0;
+        double contentX = kPadding;
         double closeX = 0;
         double closeY = 0;
         double contentWidth = 0;
@@ -112,6 +114,7 @@ private:
     ui::Color secondaryTextColor() const;
 
     Notification m_notification;
+    Layout m_layout;
     std::string m_timeText;
     std::string m_moreText;
     bool m_detailed = false;
