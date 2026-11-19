@@ -7,6 +7,7 @@
 #include <cmath>
 #include <ctime>
 #include <numbers>
+#include <utility>
 #include <sys/sysinfo.h>
 
 #include "base/event_loop.h"
@@ -70,17 +71,21 @@ render::GlassParams galleryGlass()
     return glass;
 }
 
-void applyWidgetGlass(ShellWindow &window, base::Size size)
+void applyWidgetGlass(ShellWindow &window, base::Size size, ui::RectF body = {}, float opacity = 1)
 {
     auto glass = popupGlass(0, 0, 0, 0);
     glass.blurSigma = 4;
     glass.displacement = 5.4f;
     glass.chroma = 0;
-    const ui::RectF body {0, 0, double(size.width()), double(size.height())};
-    glass.lenses.push_back({ui::toBase(body), kRadius, -1, 1, std::nullopt, widgetFinish()});
+    if (body.width <= 0 || body.height <= 0)
+        body = {0, 0, double(size.width()), double(size.height())};
+    const double radius = std::min(body.width, body.height) * kRadius / kSize;
+    if (opacity > 0)
+        glass.lenses.push_back({ui::toBase(body), radius, -1, opacity, std::nullopt, widgetFinish()});
     ui::Path shape;
-    shape.addRoundedRect(body, kRadius, kRadius);
-    window.setBackgroundBlur({{}, size}, kRadius, glass, shape);
+    if (opacity > 0)
+        shape.addRoundedRect(body, radius, radius);
+    window.setBackgroundBlur(opacity > 0 ? base::Rect({}, size) : base::Rect(), int(radius), glass, shape);
 }
 
 std::tm localTime()
@@ -111,6 +116,8 @@ struct DesktopWidgets::Widget {
     Card *card = nullptr;
     base::Job weatherJob = {};
     std::optional<widget_weather::Forecast> weather;
+    bool arriving = false;
+    std::unique_ptr<base::Timer> exitTimer;
 };
 
 const char *DesktopWidgets::title(Kind kind)
@@ -166,13 +173,91 @@ base::Size DesktopWidgets::dimensions(Size size, int unit)
 class DesktopWidgets::Card final : public ui::View
 {
 public:
-    Card(DesktopWidgets &owner, Widget &item) : m_owner(owner), m_item(item)
+    Card(DesktopWidgets &owner, Widget &item) : m_owner(owner), m_item(item), m_alive(owner.m_alive)
     {
         setName("desktop-widget");
         setTracksHover(true);
+        setLayered(true);
+        m_badge = addChild<RemoveBadge>();
+        m_badge->setGeometry({6, 6, 22, 22});
+        m_badge->setOpacity(0);
+        m_badge->setTransform({{}, .66});
     }
 
     Widget *widget() const { return &m_item; }
+    bool leaving() const { return m_leaving; }
+    ui::RectF visualRect() const
+    {
+        const auto at = mapToWindow({0, 0});
+        const auto end = mapToWindow({geometry().width, geometry().height});
+        return {at.x, at.y, end.x - at.x, end.y - at.y};
+    }
+
+    void setSlot(ui::RectF rect, bool settle = false)
+    {
+        if (m_floating || (!settle && m_slot == rect))
+            return;
+        const bool slide = m_slot.width > 0 && m_slot.size() == rect.size();
+        const auto offset = geometry().topLeft() + m_offset - rect.topLeft();
+        m_slot = rect;
+        setGeometry(rect);
+        m_offset = slide ? offset : ui::PointF{};
+        present();
+        if (slide && m_offset != ui::PointF{}) {
+            animate(m_slide, 270ms, ui::Animation::Easing::OutCubic, [this, offset](double t) {
+                m_offset = offset * (1 - t);
+                present();
+            });
+        } else if (m_slide) {
+            m_slide->stop();
+        }
+    }
+
+    void setEditing(bool editing)
+    {
+        if (m_leaving || editing == m_editing)
+            return;
+        m_editing = editing;
+        if (!editing && m_press) {
+            m_press.reset();
+            m_remove = false;
+            endDrag();
+        }
+        updateBadge();
+    }
+
+    void appear()
+    {
+        if (!std::exchange(m_item.arriving, false))
+            return;
+        m_visibility = 0;
+        present();
+        animate(m_lifecycle, 260ms, ui::Animation::Easing::OutCubic, [this](double t) {
+            m_visibility = t;
+            present();
+        });
+    }
+
+    void disappear()
+    {
+        m_leaving = true;
+        m_menu.reset();
+        updateBadge();
+        if (m_slide)
+            m_slide->stop();
+        const double from = m_visibility;
+        animate(m_lifecycle, 185ms, ui::Animation::Easing::InOutQuad, [this, from](double t) {
+            m_visibility = from * (1 - t);
+            present();
+        });
+        if (m_lifecycle)
+            m_lifecycle->onFinished = [this] {
+                core::mainLoop()->post([owner = &m_owner, item = &m_item, alive = m_alive] {
+                    if (const auto guard = alive.lock(); guard && *guard)
+                        owner->finishRemoval(item);
+                });
+            };
+    }
 
     static void artwork(ui::Painter &painter, ui::RectF rect, Kind kind, Size size, int charge, bool discharging,
                         const Widget *item = nullptr)
@@ -504,14 +589,13 @@ public:
     }
 
 protected:
-    bool acceptsPointer() const override { return true; }
+    bool acceptsPointer() const override { return !m_leaving && m_visibility > .4; }
     void paint(ui::Painter &painter) override
     {
+        if (m_alive.expired())
+            return;
         artwork(painter, localRect(), m_item.kind, m_item.size, m_owner.m_controls.batteryCharge(),
                 m_owner.m_controls.onBattery(), &m_item);
-        if (m_owner.m_gallery)
-            sign(painter, {6, 6, 22, 22}, false,
-                 panel::dark() ? ui::Color::rgb(0x4F4F55) : ui::Color::rgb(0xDFDFE4), ink());
     }
 
     void pointerPress(const ui::PointerEvent &event) override
@@ -539,24 +623,37 @@ protected:
             m_menu->addItem(tr("Edit Widgets…"), [this] { m_owner.edit(m_item.inCentre); });
             m_menu->popupAt(window(), mapToWindow(event.position));
         }
-        if (event.button == ui::MouseButton::Left && (m_owner.m_gallery || m_item.kind == Kind::Reminders
+        if (event.button == ui::MouseButton::Left && (m_editing || m_item.kind == Kind::Reminders
                                                        || m_item.kind == Kind::Photos || m_item.kind == Kind::Weather)) {
-            m_press = event.position;
-            m_dragging = false;
-            m_remove = control_paint::contains({4, 4, 26, 26}, event.position);
+            m_press = dragPoint(event.position);
+            m_remove = m_editing && m_badge->opacity() > .45
+                    && control_paint::contains(kBadgeHit, event.position);
+            if (m_remove)
+                updateBadge();
         }
     }
 
     void pointerMove(const ui::PointerEvent &event) override
     {
-        if (!m_press || !m_owner.m_gallery || m_remove)
+        if (!m_press || !m_editing || m_remove)
             return;
-        const auto delta = event.position - *m_press;
-        if (!m_dragging && std::hypot(delta.x, delta.y) < 5)
+        const auto delta = dragPoint(event.position) - *m_press;
+        if (!m_floating && std::hypot(delta.x, delta.y) < 5)
             return;
-        m_dragging = true;
-        if (m_item.inCentre)
+        if (!m_floating) {
+            m_floating = true;
+            m_dragOffset = m_offset;
+            if (m_slide)
+                m_slide->stop();
+            if (m_item.inCentre)
+                parent()->raiseChild(this);
+            lift(true);
+        }
+        if (m_item.inCentre) {
+            m_offset = m_dragOffset + delta;
+            present();
             return;
+        }
         const auto global = m_item.window->geometry().topLeft();
         m_owner.move(&m_item, global + base::Point(int(std::lround(delta.x)), int(std::lround(delta.y))));
     }
@@ -565,16 +662,14 @@ protected:
     {
         if (event.button != ui::MouseButton::Left || !m_press)
             return;
-        if (m_owner.m_gallery && m_remove && control_paint::contains({4, 4, 26, 26}, event.position))
-            scheduleRemove();
-        else if (m_dragging) {
-            if (m_item.inCentre) {
-                const auto at = event.position + geometry().topLeft();
-                m_owner.reorder(&m_item, at, parent()->geometry().width);
-            } else {
-                m_owner.save();
-            }
-        } else if (!m_owner.m_gallery && localRect().contains(event.position)) {
+        m_press.reset();
+        if (std::exchange(m_remove, false)) {
+            updateBadge();
+            if (m_editing && control_paint::contains(kBadgeHit, event.position))
+                scheduleRemove();
+        } else if (m_floating) {
+            endDrag(dragPoint(event.position));
+        } else if (!m_editing && localRect().contains(event.position)) {
             if (m_item.kind == Kind::Reminders && !m_item.value.empty()) {
                 m_item.completed = !m_item.completed;
                 m_owner.save();
@@ -583,7 +678,101 @@ protected:
                 m_owner.configure(m_item);
             }
         }
-        m_press.reset();
+    }
+
+private:
+    static constexpr ui::RectF kBadgeHit {4, 4, 26, 26};
+    class RemoveBadge final : public ui::View {
+    public:
+        RemoveBadge() { setName("remove-widget"); setLayered(true); }
+    protected:
+        void paint(ui::Painter &painter) override
+        {
+            sign(painter, localRect(), false,
+                 panel::dark() ? ui::Color::rgb(0x4F4F55) : ui::Color::rgb(0xDFDFE4), ink());
+        }
+    };
+
+    void animate(std::unique_ptr<ui::Animation> &animation, std::chrono::milliseconds duration,
+                 ui::Animation::Easing easing, std::function<void(double)> update)
+    {
+        if (!window()) {
+            update(1);
+            return;
+        }
+        if (!animation)
+            animation = std::make_unique<ui::Animation>(window());
+        animation->setDuration(duration);
+        animation->setEasing(easing);
+        animation->onFinished = {};
+        animation->onUpdate = std::move(update);
+        animation->start();
+    }
+
+    void updateBadge()
+    {
+        const double to = m_editing && !m_leaving ? 1 : 0;
+        const double scaleTo = to ? (m_remove ? .83 : 1) : .66;
+        const double from = m_badge->opacity();
+        const double scaleFrom = m_badge->transform().scale;
+        m_badge->requestPaint();
+        animate(m_badgeMotion, to ? 190ms : 145ms, ui::Animation::Easing::OutCubic, [=, this](double t) {
+            m_badge->setOpacity(std::lerp(from, to, t));
+            m_badge->setTransform({{}, std::lerp(scaleFrom, scaleTo, t)});
+        });
+    }
+
+    void lift(bool held)
+    {
+        const double from = m_lift;
+        animate(m_liftMotion, held ? 140ms : 240ms, ui::Animation::Easing::OutCubic, [this, from, held](double t) {
+            m_lift = std::lerp(from, held ? 1. : 0., t);
+            present();
+        });
+    }
+
+    ui::PointF dragPoint(ui::PointF local) const
+    {
+        const auto point = mapToWindow(local);
+        return m_item.inCentre ? parent()->mapFromWindow(point) : point;
+    }
+
+    void endDrag(std::optional<ui::PointF> drop = {})
+    {
+        if (!std::exchange(m_floating, false))
+            return;
+        lift(false);
+        if (m_item.inCentre) {
+            const auto slot = m_slot;
+            if (drop)
+                m_owner.reorder(&m_item, *drop, parent()->geometry().width);
+            if (slot == m_slot)
+                setSlot(slot, true);
+        } else {
+            m_owner.save();
+        }
+    }
+
+    void present()
+    {
+        if (m_alive.expired())
+            return;
+        setOpacity(m_visibility);
+        const bool inCentre = m_item.inCentre;
+        const double scale = std::lerp(.88, 1., m_visibility) + m_lift * (inCentre ? .035 : -.025);
+        setTransform({m_offset + ui::PointF{0, inCentre ? 10 * (1 - m_visibility) : 0}, scale});
+        updateGlass();
+    }
+
+public:
+    void updateGlass()
+    {
+        if (m_item.inCentre) {
+            if (auto *stack = static_cast<Stack *>(parent()); stack && stack->onPresentationChanged)
+                stack->onPresentationChanged();
+        } else if (m_item.window) {
+            applyWidgetGlass(*m_item.window, m_item.window->geometry().size(), visualRect(), float(opacity()));
+        }
     }
 
 private:
@@ -596,24 +785,33 @@ private:
     }
     DesktopWidgets &m_owner;
     Widget &m_item;
+    std::weak_ptr<bool> m_alive;
+    RemoveBadge *m_badge = nullptr;
+    std::unique_ptr<ui::Animation> m_badgeMotion, m_lifecycle, m_slide, m_liftMotion;
     std::unique_ptr<ui::Menu> m_menu;
     std::optional<ui::PointF> m_press;
+    ui::RectF m_slot;
+    ui::PointF m_offset, m_dragOffset;
+    double m_visibility = 1, m_lift = 0;
+    bool m_editing = false, m_leaving = false;
     bool m_remove = false;
-    bool m_dragging = false;
+    bool m_floating = false;
 };
 
 DesktopWidgets::Stack::Stack(DesktopWidgets &owner) : m_owner(owner), m_alive(owner.m_alive)
 {
     setName("notification-widgets");
     m_changed = owner.m_changed.connect([this] {
-        layout(); // Drop obsolete views before the removed instance is destroyed.
+        layout(); // Keep retiring views until their exit motion completes.
         requestLayout();
         if (onChanged)
             onChanged();
     });
     m_repaint = owner.m_repaint.connect([this] {
-        for (const auto &card : children())
+        for (const auto &card : children()) {
+            static_cast<Card *>(card.get())->setEditing(bool(m_owner.m_gallery));
             card->requestPaint();
+        }
     });
 }
 
@@ -624,6 +822,9 @@ double DesktopWidgets::Stack::heightForWidth(double width) const
     double height = 0;
     for (const auto &[item, rect] : m_owner.stackLayout(width))
         height = std::max(height, rect.bottom());
+    for (const auto &child : children())
+        if (static_cast<Card *>(child.get())->leaving())
+            height = std::max(height, child->geometry().bottom());
     return height;
 }
 
@@ -634,35 +835,44 @@ void DesktopWidgets::Stack::layout()
     const auto cards = m_owner.stackLayout(geometry().width);
     for (size_t i = children().size(); i > 0; --i) {
         auto *card = static_cast<Card *>(children()[i - 1].get());
-        if (std::ranges::none_of(cards, [card](const auto &pair) { return pair.first == card->widget(); }))
-            takeChild(card);
+        if (std::ranges::none_of(cards, [card](const auto &pair) { return pair.first == card->widget(); })) {
+            const bool exiting = std::ranges::any_of(m_owner.m_exiting, [card](const auto &item) { return item.get() == card->widget(); });
+            if (!exiting)
+                takeChild(card);
+            else if (!card->leaving())
+                card->disappear();
+        }
     }
     for (const auto &[item, rect] : cards) {
         const auto it = std::ranges::find_if(children(), [item](const auto &view) { return static_cast<Card *>(view.get())->widget() == item; });
         auto *card = it == children().end() ? addChild<Card>(m_owner, *item) : static_cast<Card *>(it->get());
-        card->setGeometry(rect);
+        card->setSlot(rect);
+        card->setEditing(bool(m_owner.m_gallery));
+        card->appear();
         card->requestPaint();
     }
 }
 
 void DesktopWidgets::Stack::appendGlass(render::GlassParams &glass, ui::Path &mask, ui::RectF viewport) const
 {
+    if (m_alive.expired())
+        return;
     const auto clip = ui::toBase(viewport);
     ui::Path clipPath;
     clipPath.addRect(viewport);
     for (const auto &child : children()) {
-        const auto origin = child->mapToWindow({0, 0});
-        const ui::RectF rect {origin.x, origin.y, child->geometry().width, child->geometry().height};
-        if (!clip.intersects(ui::toBase(rect)))
+        const auto *cardView = static_cast<const Card *>(child.get());
+        const auto rect = cardView->visualRect();
+        if (cardView->opacity() <= 0 || !clip.intersects(ui::toBase(rect)))
             continue;
         const double radius = std::min(rect.width, rect.height) * kRadius / kSize;
         ui::Path card;
         card.addRoundedRect(rect, radius, radius);
         mask.addPath(card.intersected(clipPath));
-        const auto *item = static_cast<const Card *>(child.get())->widget();
+        const auto *item = cardView->widget();
         const auto finish = item->kind == Kind::Battery
                 ? (panel::dark() ? render::GlassFinish::FrostedDark : render::GlassFinish::FrostedLight) : widgetFinish();
-        glass.lenses.push_back({ui::toBase(rect), radius, -1, 1, clip, finish});
+        glass.lenses.push_back({ui::toBase(rect), radius, -1, float(cardView->opacity()), clip, finish});
     }
 }
 
@@ -1224,7 +1434,9 @@ void DesktopWidgets::updateOutput()
         const auto geometry = geometryFor(*item);
         item->window->setOutput(output->name);
         item->window->setGeometry(geometry);
-        applyWidgetGlass(*item->window, geometry.size());
+        item->card->setEditing(bool(m_gallery));
+        item->card->appear();
+        item->card->updateGlass();
         item->window->show();
     }
     if (m_gallery) {
@@ -1240,8 +1452,10 @@ void DesktopWidgets::updateOutput()
 void DesktopWidgets::repaint()
 {
     for (const auto &item : m_widgets)
-        if (item->card)
+        if (item->card) {
+            item->card->setEditing(bool(m_gallery));
             item->card->requestPaint();
+        }
     if (m_galleryView)
         m_galleryView->requestPaint();
     m_repaint();
@@ -1304,7 +1518,9 @@ void DesktopWidgets::add(Kind kind, Size size, std::optional<base::Point> global
     const bool toCentre = dropPoint ? m_centreDrop && m_centreDrop(*dropPoint)
                                     : m_addToCentre && m_centreOpen && m_centreOpen();
     if (toCentre) {
-        m_widgets.push_back(std::make_unique<Widget>(Widget {kind, size == Size::ExtraLarge ? Size::Large : size, {}, true}));
+        auto item = std::make_unique<Widget>(Widget {kind, size == Size::ExtraLarge ? Size::Large : size, {}, true});
+        item->arriving = true;
+        m_widgets.push_back(std::move(item));
         changed();
         return;
     }
@@ -1333,6 +1549,7 @@ void DesktopWidgets::add(Kind kind, Size size, std::optional<base::Point> global
             return;
     }
     item->position = geometryFor(*item).topLeft() - r.topLeft();
+    item->arriving = true;
     m_widgets.push_back(std::move(item));
     updateOutput();
     changed();
@@ -1343,9 +1560,29 @@ void DesktopWidgets::remove(Widget *item)
     const auto it = std::ranges::find_if(m_widgets, [item](const auto &candidate) { return candidate.get() == item; });
     if (it == m_widgets.end())
         return;
-    auto retiring = std::move(*it);
+    m_exiting.push_back(std::move(*it));
     m_widgets.erase(it);
+    if (item->window) {
+        item->window->setInputRegion(base::Region());
+        item->card->disappear();
+    }
+    // Allow completion even if the output or notification column stops drawing.
+    item->exitTimer = std::make_unique<base::Timer>();
+    item->exitTimer->setSingleShot(true);
+    item->exitTimer->onTimeout = [this, item] { finishRemoval(item); };
+    item->exitTimer->start(500ms);
     changed();
+}
+
+void DesktopWidgets::finishRemoval(Widget *item)
+{
+    const auto it = std::ranges::find_if(m_exiting, [item](const auto &candidate) { return candidate.get() == item; });
+    if (it == m_exiting.end())
+        return;
+    const auto keepAlive = std::move(*it);
+    m_exiting.erase(it);
+    if (item->inCentre)
+        m_changed(); // Detach views before their Widget is destroyed.
 }
 
 void DesktopWidgets::resize(Widget *item, Size size)

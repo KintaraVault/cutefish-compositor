@@ -13,7 +13,10 @@ surface that opened the gallery. You can also drag a preview to the desktop or
 into the open Notification Center. The two surfaces keep separate instances.
 Drag cards to move them while editing, use the minus button to remove them, or
 right-click for available sizes and settings. **Done** and Escape close the
-gallery. The `desktop-widgets.conf` preferences preserve surface, order, size,
+gallery. Widgets scale and fade when added or removed; while editing, cards
+follow the pointer and settle into place, the centre stack glides into its new
+order, and the minus buttons scale and fade with edit mode. The
+`desktop-widgets.conf` preferences preserve surface, order, size,
 desktop position and settings, and read positions saved by earlier versions.
 
 | Widget | Data |
@@ -32,7 +35,7 @@ History cards and live banners use a dedicated satin profile: a diffuse local
 backdrop, a refracting lip and a thin highlight derived from incident light.
 The exposed layers of grouped cards use the same profile and move with the
 card. New notifications slide and fade in; dismissals move out before the list
-closes their gap.
+closes their gap. History timestamps sit to the left of any image thumbnail.
 The layout is based on the supplied Tahoe crops. Motion approximates the visible
 transitions; the crops don't establish the original timings and easing curves.
 The gallery shows the providers available in this fork, not a simulated Apple

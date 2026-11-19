@@ -803,6 +803,7 @@ void NotificationCentre::build(const Placement &placement)
             m_scroll->requestLayout();
             updateGlass();
         };
+        stack->onPresentationChanged = [this] { updateGlass(); };
         m_stack = stack;
     }
     m_window->setContentView(std::move(content));

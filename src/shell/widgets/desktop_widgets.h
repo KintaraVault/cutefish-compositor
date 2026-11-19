@@ -37,6 +37,7 @@ public:
         double heightForWidth(double width) const override;
         void appendGlass(render::GlassParams &glass, ui::Path &mask, ui::RectF viewport) const;
         std::function<void()> onChanged;
+        std::function<void()> onPresentationChanged;
     protected:
         void layout() override;
     private:
@@ -60,6 +61,7 @@ private:
     void add(Kind kind, Size size, std::optional<base::Point> cardOrigin = {},
              std::optional<base::Point> dropPoint = {});
     void remove(Widget *item);
+    void finishRemoval(Widget *item);
     void resize(Widget *item, Size size);
     void move(Widget *item, base::Point global);
     void changed();
@@ -84,6 +86,7 @@ private:
     base::Subscription m_outputChanged;
     base::Subscription m_batteryChanged;
     std::vector<std::unique_ptr<Widget>> m_widgets;
+    std::vector<std::unique_ptr<Widget>> m_exiting;
     std::unique_ptr<ShellWindow> m_gallery;
     std::unique_ptr<ShellWindow> m_configuration;
     std::vector<std::unique_ptr<ShellWindow>> m_retiring;

@@ -268,7 +268,8 @@ NotificationCard::NotificationCard(ui::Window *window, Layout layout)
     m_appName->setVisible(m_layout == Layout::Banner);
     m_appName->setWeight(500);
     m_when = addChild<ui::Label>();
-    m_when->setElide(ui::Label::Elide::None);
+    m_when->setName("notification-time");
+    m_when->setElide(m_layout == Layout::History ? ui::Label::Elide::Right : ui::Label::Elide::None);
 
     m_title = addChild<ui::Label>();
     m_title->setWeight(700);
@@ -278,6 +279,7 @@ NotificationCard::NotificationCard(ui::Window *window, Layout layout)
     m_more = addChild<ui::Label>();
 
     m_thumbnail = addChild<ui::ImageView>();
+    m_thumbnail->setName("notification-thumbnail");
     m_thumbnail->setFillMode(ui::ImageView::FillMode::PreserveAspectCrop);
     m_thumbnail->setSourceSize({kThumbnailSize, kThumbnailSize});
     m_thumbnail->setCornerRadius(ui::Theme::current().smallRadius);
@@ -576,7 +578,11 @@ void NotificationCard::layout()
     m_when->setVisible(!m_timeText.empty());
     double titleWidth = g.contentWidth;
     if (history) {
-        const double right = m_close->isVisible() ? g.closeX - theme.smallSpacing : width - kPadding;
+        double right = width - kPadding;
+        if (showsThumbnail())
+            right = std::min(right, g.thumbnailX - theme.largeSpacing);
+        if (m_close->isVisible())
+            right = std::min(right, g.closeX - theme.smallSpacing);
         const double x = std::max(g.contentX, right - when.width);
         m_when->setGeometry({x, kPadding + m_title->baselineOffset() - m_when->baselineOffset(), std::max(0., right - x), when.height});
         if (m_when->isVisible())

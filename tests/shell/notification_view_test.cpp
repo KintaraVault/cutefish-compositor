@@ -38,6 +38,7 @@
 #include "shell/shell_window.h"
 #include "shell_test_util.h"
 #include "temporary_directory.h"
+#include "ui/bitmap.h"
 #include "ui/scroll_view.h"
 #include "ui/view.h"
 #include "wm/window.h"
@@ -210,6 +211,43 @@ TEST(NotificationMotionTest, FollowsTheQtCurve)
     EXPECT_NEAR(0.5960, shell::motionEasing(0.2), 1e-3);
     EXPECT_NEAR(0.9341, shell::motionEasing(0.5), 1e-3);
     EXPECT_NEAR(0.875, shell::outCubic(0.5), 1e-9);
+}
+
+TEST_F(NotificationViewTest, HistoryTimestampLeavesRoomForTheThumbnail)
+{
+    class LayoutCard : public shell::NotificationCard {
+    public:
+        LayoutCard() : NotificationCard(nullptr, Layout::History) {}
+        using NotificationCard::layout;
+    } card;
+    const auto path = directory.filePath("thumbnail.png");
+    ui::Bitmap bitmap(8, 8, ui::Bitmap::Format::Argb32Premultiplied);
+    std::fill_n(reinterpret_cast<uint32_t *>(bitmap.bits()), bitmap.stride() * bitmap.height() / 4, 0xffff7700);
+    ASSERT_TRUE(bitmap.savePng(path));
+    shell::Notification notification;
+    notification.summary = "Question requires an answer";
+    notification.body = "Browser update";
+    notification.image = path;
+    card.setNotification(notification);
+    card.setGeometry({0, 0, 356, 70});
+    card.setTimeText("16 hours ago");
+    card.layout();
+    const auto find = [&](const std::string &name) {
+        const auto view = std::ranges::find_if(card.children(), [&](const auto &child) { return child->name() == name; });
+        return view == card.children().end() ? nullptr : view->get();
+    };
+    auto *time = find("notification-time");
+    auto *thumbnail = find("notification-thumbnail");
+    ASSERT_NE(nullptr, time);
+    ASSERT_NE(nullptr, thumbnail);
+    ASSERT_TRUE(thumbnail->isVisible());
+    EXPECT_GT(time->geometry().width, 0);
+    EXPECT_LT(time->geometry().right(), thumbnail->geometry().x);
+    notification.image.clear();
+    card.setNotification(notification);
+    card.layout();
+    EXPECT_FALSE(thumbnail->isVisible());
+    EXPECT_DOUBLE_EQ(356 - shell::NotificationCard::kPadding, time->geometry().right());
 }
 
 TEST(NotificationMarkupTest, ReadsStyledText)

@@ -1365,9 +1365,17 @@ TEST_F(ControlCenterTest, WidgetsCanBeAddedDraggedAndRemovedAndSurviveRestart)
         key(KEY_ENTER); // Add the selected Clock, small.
         frames(std::chrono::milliseconds(55));
         ASSERT_EQ(4u, widgetWindows().size());
+        auto *surface = widgetWindows().back()->rootSurface();
+        ASSERT_EQ(1u, surface->glass().lenses.size());
+        EXPECT_GT(surface->glass().lenses.front().opacity, 0);
+        EXPECT_LT(surface->glass().lenses.front().opacity, 1);
+        frames(std::chrono::milliseconds(260));
+        EXPECT_FLOAT_EQ(1, surface->glass().lenses.front().opacity);
         const auto from = widgetWindows().back()->bounds();
         press(from.center().x(), from.center().y());
         move(from.center().x() + 53, from.center().y() + 36);
+        frames(std::chrono::milliseconds(115));
+        EXPECT_LT(surface->glass().lenses.front().bounds.width(), from.width());
         release();
         frame();
         relocated = from.translated(base::Point(53, 36));
@@ -1381,7 +1389,12 @@ TEST_F(ControlCenterTest, WidgetsCanBeAddedDraggedAndRemovedAndSurviveRestart)
     restored.edit();
     frames(std::chrono::milliseconds(280));
     click(relocated.x() + 15, relocated.y() + 15);
-    test::runFor(std::chrono::milliseconds(15));
+    frames(std::chrono::milliseconds(70));
+    ASSERT_EQ(4u, widgetWindows().size());
+    auto *leaving = widgetWindows().back()->rootSurface();
+    ASSERT_EQ(1u, leaving->glass().lenses.size());
+    EXPECT_LT(leaving->glass().lenses.front().opacity, 1);
+    frames(std::chrono::milliseconds(240));
     EXPECT_EQ(3u, widgetWindows().size());
 }
 
@@ -1504,6 +1517,80 @@ TEST_F(ControlCenterTest, TheGalleryPlacesIndependentWidgetsInNotificationCenter
     EXPECT_EQ(8, saved.intValue("Widgets/count"));
     EXPECT_TRUE(saved.boolValue("Widgets/6-inCentre"));
     EXPECT_TRUE(saved.boolValue("Widgets/7-inCentre"));
+    column.close();
+    frames(std::chrono::milliseconds(225));
+}
+
+TEST_F(ControlCenterTest, CentreWidgetsLiftReflowAndAnimateTheirRemoveBadges)
+{
+    auto history = std::make_unique<shell::Notifications>(shell->bus(), shell->applications(), &shell->tasks(),
+            shell::Notifications::Files {directory.filePath("widget-motion-notifications.conf"), directory.filePath("motion-history"),
+                                         directory.filePath("motion-images")});
+    auto *notifications = shell->addComponent(std::make_unique<shell::NotificationUi>(shell.get(), std::move(history)));
+    auto &column = notifications->centre();
+    shell::DesktopWidgets widgets(shell.get(), *center, directory.filePath("widget-motion.conf"));
+    widgets.setNotificationCentre(column);
+    column.open(bar.get(), {1320, kMenuBar});
+    frames(std::chrono::milliseconds(310));
+    ASSERT_NE(nullptr, column.shellWindow());
+    const auto find = [](ui::View *root, const std::string &name, const auto &self) -> ui::View * {
+        if (root->name() == name)
+            return root;
+        for (const auto &child : root->children())
+            if (auto *match = self(child.get(), name, self))
+                return match;
+        return nullptr;
+    };
+    auto *stack = find(column.shellWindow()->window()->contentView(), "notification-widgets", find);
+    ASSERT_NE(nullptr, stack);
+    ASSERT_EQ(3u, stack->children().size());
+    auto *left = stack->children()[0].get();
+    auto *right = stack->children()[1].get();
+    auto *badge = find(right, "remove-widget", find);
+    ASSERT_NE(nullptr, badge);
+    EXPECT_DOUBLE_EQ(0, badge->opacity());
+    widgets.edit(true);
+    frames(std::chrono::milliseconds(65));
+    EXPECT_GT(badge->opacity(), 0);
+    EXPECT_LT(badge->opacity(), 1);
+    frames(std::chrono::milliseconds(320));
+    EXPECT_DOUBLE_EQ(1, badge->opacity());
+    const auto global = [&](ui::View *view, ui::PointF at) {
+        const auto p = view->mapToWindow(at);
+        return p + ui::PointF{double(column.geometry().x()), double(column.geometry().y())};
+    };
+    const auto leftSlot = left->geometry();
+    const auto rightSlot = right->geometry();
+    const auto from = global(right, {85, 58});
+    const auto to = global(left, {85, 58});
+    press(from.x, from.y);
+    move(to.x, to.y);
+    EXPECT_LT(right->transform().translation.x, -100);
+    release();
+    EXPECT_EQ(leftSlot, right->geometry());
+    EXPECT_EQ(rightSlot, left->geometry());
+    EXPECT_LT(left->transform().translation.x, -100);
+    frames(std::chrono::milliseconds(300));
+    EXPECT_TRUE(left->transform().isIdentity());
+    EXPECT_TRUE(right->transform().isIdentity());
+
+    const auto remove = global(right, {17, 17});
+    click(remove.x, remove.y);
+    frames(std::chrono::milliseconds(65));
+    ASSERT_EQ(3u, stack->children().size());
+    EXPECT_LT(right->opacity(), 1);
+    EXPECT_GT(right->opacity(), 0);
+    EXPECT_LT(badge->opacity(), 1);
+    frames(std::chrono::milliseconds(250));
+    EXPECT_EQ(2u, stack->children().size());
+    auto *remainingBadge = find(left, "remove-widget", find);
+    ASSERT_NE(nullptr, remainingBadge);
+    widgets.done();
+    frames(std::chrono::milliseconds(65));
+    EXPECT_GT(remainingBadge->opacity(), 0);
+    EXPECT_LT(remainingBadge->opacity(), 1);
+    frames(std::chrono::milliseconds(190));
+    EXPECT_DOUBLE_EQ(0, remainingBadge->opacity());
     column.close();
     frames(std::chrono::milliseconds(225));
 }
