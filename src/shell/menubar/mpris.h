@@ -5,8 +5,10 @@
 #ifndef CUTEFISH_SHELL_MENUBAR_MPRIS_H_
 #define CUTEFISH_SHELL_MENUBAR_MPRIS_H_
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -51,6 +53,12 @@ public:
     std::string title() const;
     std::string artist() const;
     std::string artUrl() const;
+    std::optional<double> position() const; // Seconds, projected from a monotonic sample.
+    double duration() const;
+    base::dbus::ObjectPath trackId() const;
+    bool canSetPosition() const;
+    void refreshPosition();
+    void setPosition(double seconds);
 
     // Methods of a player that cannot be controlled are not sent.
     void play();
@@ -69,6 +77,7 @@ private:
     void apply(const std::string &interface, const base::dbus::VariantMap &properties);
     bool playerFlag(const char *name, bool fallback = false) const;
     void callPlayer(const char *method);
+    void samplePosition(std::optional<double> seconds);
 
     base::dbus::Connection *m_bus;
     std::string m_service;
@@ -82,6 +91,10 @@ private:
     base::dbus::VariantMap m_metadata;
     bool m_rootReady = false;
     bool m_playerReady = false;
+    std::optional<double> m_position;
+    std::chrono::steady_clock::time_point m_sampleTime;
+    uint64_t m_positionRevision = 0;
+    bool m_readingPosition = false;
 };
 
 // The media players on the bus and the one the control centre shows. A

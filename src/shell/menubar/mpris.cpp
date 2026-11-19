@@ -5,6 +5,7 @@
 #include "shell/menubar/mpris.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "base/strings.h"
 
@@ -42,6 +43,13 @@ MprisPlayer::MprisPlayer(dbus::Connection *bus, std::string service)
             if (!invalidated.empty())
                 load(interface);
         }));
+        rule.interface = kPlayerInterface;
+        rule.member = "Seeked";
+        m_matches.push_back(m_bus->subscribe(rule, [this](const dbus::Message &message) {
+            int64_t position;
+            if (m_sender.accepts(message) && message.read(position))
+                samplePosition(std::max(int64_t(0), position) / 1e6);
+        }));
     }
     load(kRootInterface);
     load(kPlayerInterface);
@@ -69,10 +77,24 @@ void MprisPlayer::apply(const std::string &interface, const dbus::VariantMap &pr
     const bool root = interface == kRootInterface;
     dbus::VariantMap &stored = root ? m_rootProperties : m_playerProperties;
     const PlaybackStatus status = playbackStatus();
+    const auto oldTrack = trackId();
+    const auto oldTitle = title();
+    const auto oldPosition = position();
     for (const auto &[name, value] : properties) {
         stored[name] = value;
         if (!root && name == "Metadata")
             m_metadata = value.value<dbus::VariantMap>();
+    }
+    if (!root) {
+        if (const auto pos = properties.find("Position"); pos != properties.end()) {
+            const auto micros = pos->second.get<int64_t>();
+            samplePosition(micros && *micros >= 0 ? std::optional<double>(*micros / 1e6) : std::nullopt);
+        } else if (playbackStatus() == PlaybackStatus::Stopped || oldTrack != trackId()
+                   || (oldTrack.path.empty() && oldTitle != title())) {
+            samplePosition(std::nullopt);
+        } else if (status != playbackStatus() || properties.contains("Rate")) {
+            samplePosition(oldPosition);
+        }
     }
     changed();
     if (playbackStatus() != status)
@@ -155,6 +177,78 @@ std::string MprisPlayer::artist() const
 std::string MprisPlayer::artUrl() const
 {
     return stringOf(m_metadata, "mpris:artUrl");
+}
+
+dbus::ObjectPath MprisPlayer::trackId() const
+{
+    const auto it = m_metadata.find("mpris:trackid");
+    return it == m_metadata.end() ? dbus::ObjectPath() : it->second.value<dbus::ObjectPath>();
+}
+
+double MprisPlayer::duration() const
+{
+    const auto it = m_metadata.find("mpris:length");
+    return it == m_metadata.end() ? 0 : std::max(int64_t(0), it->second.value<int64_t>()) / 1e6;
+}
+
+void MprisPlayer::samplePosition(std::optional<double> seconds)
+{
+    ++m_positionRevision;
+    m_sampleTime = std::chrono::steady_clock::now();
+    m_position = seconds;
+}
+
+std::optional<double> MprisPlayer::position() const
+{
+    if (!m_position || playbackStatus() == PlaybackStatus::Stopped)
+        return std::nullopt;
+    double elapsed = *m_position;
+    if (playbackStatus() == PlaybackStatus::Playing) {
+        const auto it = m_playerProperties.find("Rate");
+        const double rate = it == m_playerProperties.end() ? 1 : it->second.value<double>(1);
+        if (std::isfinite(rate))
+            elapsed += rate * std::chrono::duration<double>(std::chrono::steady_clock::now() - m_sampleTime).count();
+    }
+    return duration() > 0 ? std::clamp(elapsed, 0., duration()) : std::max(0., elapsed);
+}
+
+void MprisPlayer::refreshPosition()
+{
+    if (!m_bus || m_readingPosition || playbackStatus() == PlaybackStatus::Stopped)
+        return;
+    const auto revision = m_positionRevision;
+    m_readingPosition = true;
+    m_calls.track([&](std::function<void()> finished) {
+        return m_player.getPropertyAsync("Position", [this, revision, finished](const dbus::Reply &reply) {
+            m_readingPosition = false;
+            if (revision == m_positionRevision) {
+                const auto value = reply.value<dbus::Variant>();
+                const auto micros = value ? value->get<int64_t>() : std::nullopt;
+                if (micros && *micros >= 0)
+                    samplePosition(*micros / 1e6);
+            }
+            finished();
+        });
+    });
+}
+
+bool MprisPlayer::canSetPosition() const
+{
+    const auto track = trackId();
+    return canControl() && playerFlag("CanSeek") && duration() > 0
+            && playbackStatus() != PlaybackStatus::Stopped
+            && !track.path.empty() && track.path != "/org/mpris/MediaPlayer2/TrackList/NoTrack";
+}
+
+void MprisPlayer::setPosition(double seconds)
+{
+    if (!canSetPosition() || !std::isfinite(seconds))
+        return;
+    const auto length = m_metadata.at("mpris:length").value<int64_t>();
+    const auto micros = int64_t(std::clamp(static_cast<long double>(seconds) * 1e6L,
+                                           0.L, static_cast<long double>(length - 1)));
+    if (m_player.send("SetPosition", trackId(), micros))
+        samplePosition(micros / 1e6);
 }
 
 void MprisPlayer::callPlayer(const char *method)

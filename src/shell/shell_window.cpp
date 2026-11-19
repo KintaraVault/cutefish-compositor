@@ -143,6 +143,11 @@ ShellWindow::ShellWindow(ShellWindow *parent, ui::EmbeddedWindow *popup)
         // toolkit closes the whole chain from its root, innermost first.
         if (!*alive)
             return;
+        if (onPopupDismissed) {
+            auto dismissed = onPopupDismissed;
+            dismissed();
+            return;
+        }
         if (ShellWindow *root = this->root(); root && root->m_window)
             root->m_window->closePopups();
     });

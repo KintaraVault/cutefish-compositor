@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <ctime>
 #include <thread>
 
@@ -20,6 +21,7 @@
 #include "compositor/menu_model.h"
 #include "compositor/surface.h"
 #include "dbus_test_client.h"
+#include "egl_test_util.h"
 #include "fake_renderer.h"
 #include "input/input_manager.h"
 #include "input/seat.h"
@@ -27,11 +29,13 @@
 #include "scene/node.h"
 #include "scene/scene.h"
 #include "render/renderer.h"
+#include "shell/controlcenter/tiles.h"
 #include "shell/shell.h"
 #include "shell/shell_data.h"
 #include "shell/shell_window.h"
 #include "shell/menubar/bar_item.h"
 #include "shell/menubar/battery.h"
+#include "shell/menubar/media_activity.h"
 #include "shell/menubar/menu_popup.h"
 #include "shell/menubar/device_usage.h"
 #include "shell/menubar/menu_bar.h"
@@ -47,6 +51,7 @@
 #include "temporary_directory.h"
 #include "ui/bitmap.h"
 #include "ui/embedded_window.h"
+#include "ui/label.h"
 #include "ui/menu.h"
 #include "ui/theme.h"
 #include "wm/status_items.h"
@@ -164,6 +169,69 @@ protected:
 
     void frame() { compositor.updateTextures(renderer); }
 
+    void frames(int ms)
+    {
+        for (int elapsed = 0; elapsed < ms; elapsed += 16) {
+            test::runFor(std::chrono::milliseconds(16));
+            frame();
+        }
+    }
+
+    shell::ShellWindow *mediaPopup() const
+    {
+        for (auto *window : shell->windows())
+            if (window->isShown() && dynamic_cast<shell::MediaTile *>(window->window()->contentView()))
+                return window;
+        return nullptr;
+    }
+
+    void verifyActivityGlass(shell::ShellWindow &popup)
+    {
+        auto gpu = render::EglRendererTestAccess::create();
+        if (!gpu)
+            return;
+        const EGLint attributes[] = {EGL_WIDTH, kOutput.width(), EGL_HEIGHT, kOutput.height(), EGL_NONE};
+        const auto surface = eglCreatePbufferSurface(gpu->eglDisplay(), gpu->eglConfig(), attributes);
+        ASSERT_NE(surface, EGL_NO_SURFACE);
+        render::EglRenderTarget target(gpu->eglDisplay(), surface, nullptr, kOutput.size());
+        render::TargetRetirement retire {gpu.get(), &target};
+        const auto bounds = popup.drawnBounds();
+        const auto *node = popup.surface()->node();
+        const char *prefix = std::getenv("CUTEFISH_ACTIVITY_PREVIEW");
+        uint64_t frameIndex = 0;
+        const auto capture = [&](bool warm) {
+            gpu->setOutputContext({"activity-preview", kOutput, kOutput.size(), 1, 0, ++frameIndex});
+            if (!gpu->beginFrame(&target))
+                return ui::Bitmap {};
+            auto image = gpu->captureFrame([&] {
+                if (warm)
+                    gpu->clear({.73, .26, .14, 1});
+                else
+                    gpu->clear({.14, .32, .73, 1});
+                gpu->drawBackgroundBlur(node->backgroundBlurRect().translated(bounds.topLeft()),
+                        node->backgroundBlurRadius(), bounds, node->glass(), {});
+            });
+            gpu->cancelFrame();
+            if (prefix)
+                EXPECT_TRUE(image.savePng(std::string(prefix) + (warm ? "-warm.png" : "-cool.png")));
+            return image;
+        };
+        const auto warm = capture(true);
+        const auto cool = capture(false);
+        ASSERT_FALSE(warm.isNull());
+        ASSERT_FALSE(cool.isNull());
+        const auto red = [](uint32_t pixel) { return (pixel >> 16) & 255; };
+        const auto blue = [](uint32_t pixel) { return pixel & 255; };
+        const auto centre = bounds.center();
+        const uint32_t warmGlass = warm.pixel(centre.x(), centre.y());
+        const uint32_t coolGlass = cool.pixel(centre.x(), centre.y());
+        EXPECT_GT(red(warmGlass), blue(warmGlass));
+        EXPECT_GT(blue(coolGlass), red(coolGlass));
+        EXPECT_LT(red(warmGlass), red(warm.pixel(0, 0)));
+        EXPECT_LT(blue(coolGlass), blue(cool.pixel(0, 0)));
+        EXPECT_EQ(warm.pixel(bounds.x(), bounds.y()), warm.pixel(0, 0));
+    }
+
     void move(double x, double y)
     {
         input.onPointerMotionAbsolute(at(time += 20), {x, y});
@@ -194,6 +262,106 @@ protected:
 };
 
 } // namespace
+
+TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
+{
+    const auto *root = bar->window()->window()->contentView();
+    const auto activity = std::ranges::find_if(root->children(), [](const auto &child) {
+        return child->name() == "media-activity";
+    });
+    ASSERT_NE(activity, root->children().end());
+    const auto *pill = activity->get();
+    EXPECT_FALSE(pill->isVisible());
+
+    test::DBusTestClient client;
+    const std::string path = "/org/mpris/MediaPlayer2";
+    dbus::Object identity(client.connection.get(), path, "org.mpris.MediaPlayer2");
+    dbus::Object player(client.connection.get(), path, "org.mpris.MediaPlayer2.Player");
+    std::string status = "Playing";
+    int64_t position = 6000000;
+    player.addProperty("PlaybackStatus", [&] { return status; });
+    player.addProperty("Position", [&] { return position; });
+    player.addProperty("Metadata", [] {
+        return dbus::VariantMap {{"xesam:title", dbus::Variant(std::string("A Weekday In A Small Town"))},
+                                {"xesam:artist", dbus::Variant(std::vector<std::string>{"FSM Team"})},
+                                {"mpris:trackid", dbus::Variant(dbus::ObjectPath {"/song/one"})},
+                                {"mpris:length", dbus::Variant(int64_t(240000000))}};
+    });
+    for (const char *name : {"CanControl", "CanPause", "CanPlay", "CanSeek", "CanGoNext", "CanGoPrevious"})
+        player.addProperty(name, [] { return true; });
+    player.addMethod("Pause", [&] {
+        status = "Paused";
+        player.emitPropertiesChanged({"PlaybackStatus"});
+    });
+    player.addMethod("Play", [&] {
+        status = "Playing";
+        player.emitPropertiesChanged({"PlaybackStatus"});
+    });
+    std::string transport;
+    player.addMethod("Previous", [&] { transport = "Previous"; });
+    player.addMethod("Next", [&] { transport = "Next"; });
+    player.addMethod("SetPosition", [&](dbus::ObjectPath, int64_t value) {
+        position = value;
+        player.emitSignal("Seeked", position);
+    });
+    identity.addProperty("Identity", [] { return std::string("Test Player"); });
+    ASSERT_TRUE(identity.publish());
+    ASSERT_TRUE(player.publish());
+    ASSERT_TRUE(client.connection->requestName("org.mpris.MediaPlayer2.LiveActivityTest"));
+    ASSERT_TRUE(test::runUntil([&] { return pill->isVisible(); }));
+    frames(215);
+    const auto slot = onScreen(pill);
+    const auto control = onScreen(bar->controlIcon());
+    EXPECT_GT(slot.x, kOutput.width() / 2);
+    EXPECT_NEAR(slot.x + slot.width, control.x, 250);
+    const auto activate = [&] { click(slot.x + slot.width / 2, slot.height / 2); };
+    activate();
+    frames(280);
+    auto *popup = mediaPopup();
+    ASSERT_NE(popup, nullptr);
+    EXPECT_TRUE(bar->panelOpen());
+    const auto bounds = popup->drawnBounds();
+    EXPECT_EQ(bounds.y(), bar->window()->geometry().height() + 3);
+    EXPECT_NEAR(bounds.center().x(), slot.x + slot.width / 2, 1);
+    EXPECT_TRUE(popup->surface()->node()->hasBackgroundBlur());
+    verifyActivityGlass(*popup);
+    auto *tile = static_cast<shell::MediaTile *>(popup->window()->contentView());
+    const auto clickChild = [&](const ui::View *view) {
+        const auto rect = onScreen(view);
+        click(bounds.x() + rect.x + rect.width / 2, bounds.y() + rect.y + rect.height / 2);
+    };
+    clickChild(tile->playButton());
+    ASSERT_TRUE(test::runUntil([&] { return status == "Paused"; }));
+    frames(180);
+    clickChild(tile->previousButton());
+    ASSERT_TRUE(test::runUntil([&] { return transport == "Previous"; }));
+    clickChild(tile->nextButton());
+    ASSERT_TRUE(test::runUntil([&] { return transport == "Next"; }));
+    const auto progress = std::ranges::find_if(tile->children(), [](const auto &child) { return child->name() == "media-progress"; });
+    ASSERT_NE(progress, tile->children().end());
+    clickChild(progress->get());
+    ASSERT_TRUE(test::runUntil([&] { return position == 120000000; }));
+    key(KEY_ESC);
+    frames(205);
+    EXPECT_FALSE(bar->panelOpen());
+    EXPECT_EQ(mediaPopup(), nullptr);
+    EXPECT_TRUE(pill->isVisible());
+    activate();
+    frames(260);
+    ASSERT_NE(mediaPopup(), nullptr);
+    clickChild(static_cast<shell::MediaTile *>(mediaPopup()->window()->contentView())->playButton());
+    ASSERT_TRUE(test::runUntil([&] { return status == "Playing"; }));
+    click(20, 120);
+    EXPECT_FALSE(bar->panelOpen());
+    EXPECT_NE(mediaPopup(), nullptr); // Exit animates after the outside grab is dropped.
+    frames(205);
+    EXPECT_EQ(mediaPopup(), nullptr);
+    status = "Stopped";
+    player.emitPropertiesChanged({"PlaybackStatus"});
+    frames(220);
+    EXPECT_FALSE(pill->isVisible());
+    EXPECT_EQ(onScreen(bar->controlIcon()), control);
+}
 
 TEST_F(MenuBarViewTest, TheBarIsAPanelAlongThePrimaryOutputsTop)
 {

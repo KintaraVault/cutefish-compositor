@@ -25,6 +25,7 @@ class Menu;
 namespace cutefish::shell {
 
 class ClockItem;
+class MediaActivity;
 class DeviceUsage;
 class VpnNotifier;
 class ShellWindow;
@@ -146,6 +147,7 @@ private:
     StopItem *m_agentControl = nullptr;
     StatusItemsView *m_statusItems = nullptr;
     SystemTrayView *m_tray = nullptr;
+    MediaActivity *m_media = nullptr;
     StatusIcon *m_volume = nullptr;
     StatusIcon *m_bluetooth = nullptr;
     StatusIcon *m_network = nullptr;

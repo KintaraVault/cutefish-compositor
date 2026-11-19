@@ -203,6 +203,8 @@ target_link_libraries(cutefish-shell-bar-items PUBLIC cutefish-shell cutefish-sh
 # The menu bar: its window, tray, status icons and clock on the bar's backend.
 find_package(CutefishClients REQUIRED COMPONENTS appearance)
 add_library(cutefish-shell-menubar-view STATIC
+    src/shell/menubar/media_activity.cpp
+    src/shell/menubar/media_activity.h
     src/shell/menubar/menu_popup.cpp
     src/shell/menubar/menu_popup.h
     src/shell/menubar/device_usage.cpp
@@ -219,7 +221,7 @@ add_library(cutefish-shell-menubar-view STATIC
     src/shell/menubar/system_tray_view.h
 )
 target_link_libraries(cutefish-shell-menubar-view PUBLIC cutefish-shell cutefish-shell-bar-items
-    cutefish-shell-menubar cutefish-shell-wallpaper Cutefish::AudioClient)
+    cutefish-shell-menubar cutefish-shell-wallpaper Cutefish::AudioClient PRIVATE cutefish-shell-controlcenter)
 target_link_libraries(cutefish-compositor PRIVATE cutefish-shell-menubar-view)
 # The menu bar's app menus.
 include(src/shell/menubar/app_menus.cmake)

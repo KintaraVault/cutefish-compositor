@@ -169,6 +169,9 @@ public:
     // The window manager asked to close the window (a toplevel). A popup's
     // dismissal goes to the toolkit instead, as closePopups() on its root.
     std::function<void()> onCloseRequested;
+    // Shell-owned leaf popups can release their grab and animate dismissal
+    // instead of having the toolkit unmap the whole grab chain immediately.
+    std::function<void()> onPopupDismissed;
     // The window was mapped or unmapped, its wm::Window created or destroyed.
     base::Signal<> mappedChanged;
     // A frame of the window went to its surface, ahead of the output frame

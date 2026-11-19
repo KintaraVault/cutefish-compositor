@@ -38,6 +38,6 @@ cutefish_add_shell_test(launchpad_window_test DBUS cutefish-shell-launchpad-view
 cutefish_add_shell_test(wallpaper_test cutefish-shell-wallpaper)
 cutefish_add_shell_test(controlcenter_test cutefish-shell-controlcenter cutefish-shell-menubar-view cutefish-shell-notification-view cutefish-render)
 target_compile_definitions(controlcenter_test PRIVATE CUTEFISH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-cutefish_add_shell_test(menubar_view_test DBUS cutefish-shell-menubar-view)
+cutefish_add_shell_test(menubar_view_test DBUS cutefish-shell-menubar-view cutefish-render)
 target_compile_definitions(menubar_view_test PRIVATE CUTEFISH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 cutefish_add_shell_test(app_menus_test DBUS cutefish-shell-app-menus)

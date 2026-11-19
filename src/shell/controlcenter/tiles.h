@@ -5,6 +5,7 @@
 #ifndef CUTEFISH_SHELL_CONTROLCENTER_TILES_H_
 #define CUTEFISH_SHELL_CONTROLCENTER_TILES_H_
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -127,10 +128,12 @@ class IconButton : public ui::View
 {
 public:
     IconButton();
+    ~IconButton() override;
 
     void setFile(std::string file);
     // What the button sits on, for the ink of its plate.
     void setSurfaceColor(ui::Color color);
+    void setGlyphSize(double size);
 
     std::function<void()> onClicked;
 
@@ -146,8 +149,17 @@ protected:
     void pointerRelease(const ui::PointerEvent &event) override;
 
 private:
+    void animate();
+    void placeGlyphs();
     SvgIcon *m_icon;
+    SvgIcon *m_outgoing;
+    std::string m_file;
+    std::unique_ptr<ui::Animation> m_motion;
+    std::unique_ptr<ui::Animation> m_swap;
     ui::Color m_surface;
+    double m_size = 0;
+    double m_press = 0;
+    double m_ink = 0;
     bool m_pressed = false;
     bool m_inside = false;
 };
@@ -164,6 +176,7 @@ public:
     ~MediaTile() override;
 
     void setControlStyle(bool enabled) { m_controlStyle = enabled; }
+    void setActivityStyle();
     void setState(const MediaState &state);
     IconButton *previousButton() const { return m_previous; }
     IconButton *playButton() const { return m_play; }
@@ -173,6 +186,11 @@ public:
     std::function<void()> onPlay;
     std::function<void()> onPause;
     std::function<void()> onNext;
+    // The expanded Live Activity samples the common MPRIS clock on its frames.
+    std::function<std::optional<double>()> position;
+    std::function<void()> pollPosition;
+    std::function<void(double)> seek;
+    void setTimeline(double duration, bool seekable, bool trackChanged);
 
     ui::SizeF sizeHint() const override { return {0, kHeight}; }
 
@@ -181,9 +199,12 @@ protected:
     void paint(ui::Painter &painter) override;
 
 private:
+    class Progress;
     void updateArtwork();
     void loadArtwork();
     void animateArtwork();
+    void updateTimeline();
+    void animateTimeline();
 
     MediaState m_state;
     SvgIcon *m_cover;
@@ -193,6 +214,15 @@ private:
     IconButton *m_previous;
     IconButton *m_play;
     IconButton *m_next;
+    Progress *m_progress = nullptr;
+    ui::Label *m_elapsed = nullptr;
+    ui::Label *m_remaining = nullptr;
+    std::unique_ptr<ui::Animation> m_timeline;
+    std::unique_ptr<ui::Animation> m_metadataMotion;
+    double m_duration = 0;
+    double m_wavePhase = 0;
+    double m_waveEnergy = 0;
+    std::chrono::steady_clock::time_point m_nextPoll;
     bool m_artReady = false;
     bool m_controlStyle = false;
     bool m_artLoading = false;
@@ -202,6 +232,9 @@ private:
     std::shared_ptr<int> m_artRequest;
     std::unique_ptr<ui::Animation> m_artAnimation;
 };
+
+void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, double phase, double energy);
+void paintLiveMediaIcon(ui::Painter &painter, const ui::RectF &rect, double opacity = 1);
 
 // The applications behind the bar's privacy dot, with one compact row per app.
 class DeviceUsersTile : public ui::View

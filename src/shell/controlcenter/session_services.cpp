@@ -348,22 +348,7 @@ public:
 
     MediaState media() const override
     {
-        MediaState state;
-        const MprisPlayer *player = m_menuBar.mpris().current();
-        if (!player || player->playbackStatus() == MprisPlayer::PlaybackStatus::Stopped)
-            return state;
-        state.hasPlayer = true;
-        state.playing = player->playbackStatus() == MprisPlayer::PlaybackStatus::Playing;
-        state.title = player->title();
-        state.identity = player->identity();
-        state.artist = player->artist();
-        state.artUrl = player->artUrl();
-        state.canControl = player->canControl();
-        state.canGoPrevious = player->canGoPrevious();
-        state.canGoNext = player->canGoNext();
-        state.canPlay = player->canPlay();
-        state.canPause = player->canPause();
-        return state;
+        return mediaState(m_menuBar.mpris().current());
     }
 
     void mediaPrevious() override
@@ -554,6 +539,15 @@ std::unique_ptr<ControlCenterServices> createSessionServices(Shell *shell, MenuB
                                                              NotificationSettings *notifications)
 {
     return std::make_unique<SessionServices>(shell, menuBar, notifications);
+}
+
+MediaState mediaState(const MprisPlayer *player)
+{
+    if (!player || player->playbackStatus() == MprisPlayer::PlaybackStatus::Stopped)
+        return {};
+    return {true, player->playbackStatus() == MprisPlayer::PlaybackStatus::Playing,
+            player->title(), player->identity(), player->artist(), player->artUrl(), player->canControl(),
+            player->canGoPrevious(), player->canGoNext(), player->canPlay(), player->canPause()};
 }
 
 } // namespace cutefish::shell

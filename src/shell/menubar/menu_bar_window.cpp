@@ -23,6 +23,7 @@
 #include "shell/shell_window.h"
 #include "shell/menubar/clock_format.h"
 #include "shell/menubar/device_usage.h"
+#include "shell/menubar/media_activity.h"
 #include "shell/menubar/menu_bar_backdrop.h"
 #include "shell/menubar/status_icon.h"
 #include "shell/menubar/status_items_view.h"
@@ -84,6 +85,8 @@ protected:
     {
         if (m_bar->m_statusItems)
             m_bar->m_statusItems->placeItems();
+        if (m_bar->m_media)
+            m_bar->m_media->reanchor();
         m_bar->updatePlateBlur();
     }
 
@@ -142,6 +145,9 @@ MenuBarWindow::MenuBarWindow(Shell *shell, std::unique_ptr<MenuBar> menuBar)
         if (onStopAgentControl)
             onStopAgentControl();
     };
+
+    m_media = m_root->addChild<MediaActivity>(*m_shell, *m_window, m_menuBar->mpris());
+    m_media->closeOtherPopups = [this] { closePopups(); };
 
     m_statusItems = m_root->addChild<StatusItemsView>(
             this, shell->windowManager() ? shell->windowManager()->statusItems() : nullptr);
@@ -302,6 +308,8 @@ bool MenuBarWindow::lightContents() const
 
 bool MenuBarWindow::panelOpen() const
 {
+    if (m_media->isOpen())
+        return true;
     for (MenuBarPanels *panels : m_panels) {
         for (Panel panel : {Panel::ControlCenter, Panel::Network, Panel::Bluetooth, Panel::Volume, Panel::Battery,
                             Panel::NotificationCenter}) {
@@ -482,6 +490,7 @@ void MenuBarWindow::layoutRow()
     preferred(m_statusItems, m_statusItems->preferredWidth());
     m_tray->setVisible(m_tray->count() > 0);
     preferred(m_tray, m_tray->preferredWidth());
+    preferred(m_media, MediaActivity::kWidth);
     for (StatusIcon *icon : {m_volume, m_bluetooth, m_network, m_battery, m_control})
         preferred(icon, icon->preferredWidth());
     double itemsWidth = 0;
@@ -656,6 +665,7 @@ void MenuBarWindow::togglePanel(Panel panel)
 
 void MenuBarWindow::closePanels()
 {
+    m_media->close();
     for (MenuBarPanels *panels : m_panels)
         panels->closePanels();
 }

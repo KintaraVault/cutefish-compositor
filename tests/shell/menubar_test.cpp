@@ -562,9 +562,16 @@ public:
         player.addProperty("PlaybackStatus", [this] { return status; });
         player.addProperty("CanControl", [] { return true; });
         player.addProperty("CanGoNext", [] { return true; });
+        player.addProperty("CanSeek", [] { return true; });
+        player.addProperty("Position", [this] { return position; });
         player.addProperty("Metadata", [this] { return metadata; });
         for (const char *method : {"Play", "Pause", "PlayPause", "Next", "Previous", "Stop"})
             player.addMethod(method, [this, method] { calls.push_back(method); });
+        player.addMethod("SetPosition", [this](dbus::ObjectPath id, int64_t value) {
+            soughtTrack = id.path;
+            position = value;
+            player.emitSignal("Seeked", position);
+        });
         EXPECT_TRUE(root.publish());
         EXPECT_TRUE(player.publish());
         EXPECT_TRUE(bus->requestName("org.mpris.MediaPlayer2." + name));
@@ -581,9 +588,49 @@ public:
     std::string status = "Stopped";
     dbus::VariantMap metadata;
     std::vector<std::string> calls;
+    std::string soughtTrack;
+    int64_t position = 0;
 };
 
 } // namespace
+
+TEST(MprisTest, ProjectsTheRealPositionAndSeeksTheCurrentTrack)
+{
+    test::DBusTestClient client;
+    FakePlayer music(client.connection.get(), "timeline");
+    music.metadata = {{"mpris:trackid", dbus::Variant(dbus::ObjectPath {"/song/one"})},
+                      {"mpris:length", dbus::Variant(int64_t(120000000))}};
+    music.position = 12000000;
+    music.status = "Paused";
+    shell::MprisManager manager(sessionBus());
+    ASSERT_TRUE(test::runUntil([&] { return manager.current() && manager.current()->isReady(); }));
+    auto *player = manager.current();
+    EXPECT_EQ(player->position(), 12.);
+    EXPECT_EQ(player->duration(), 120.);
+    ASSERT_TRUE(player->canSetPosition());
+
+    music.setStatus("Playing");
+    ASSERT_TRUE(test::runUntil([&] { return player->position().value_or(0) > 12.; }));
+    music.setStatus("Paused");
+    ASSERT_TRUE(test::runUntil([&] { return player->playbackStatus() == shell::MprisPlayer::PlaybackStatus::Paused; }));
+    const auto paused = player->position();
+    test::runFor(std::chrono::milliseconds(20));
+    EXPECT_EQ(player->position(), paused);
+
+    player->setPosition(53.25);
+    ASSERT_TRUE(test::runUntil([&] { return music.soughtTrack == "/song/one"; }));
+    EXPECT_EQ(music.position, 53250000);
+    music.player.emitSignal("Seeked", int64_t(64000000));
+    ASSERT_TRUE(test::runUntil([&] { return player->position() == 64.; }));
+    music.position = 81000000;
+    player->refreshPosition();
+    ASSERT_TRUE(test::runUntil([&] { return player->position() == 81.; }));
+    music.metadata = {{"mpris:trackid", dbus::Variant(dbus::ObjectPath {"/song/two"})}};
+    music.player.emitPropertiesChanged({"Metadata"});
+    ASSERT_TRUE(test::runUntil([&] { return player->trackId().path == "/song/two"; }));
+    EXPECT_FALSE(player->position().has_value());
+    EXPECT_FALSE(player->canSetPosition());
+}
 
 TEST(MprisTest, ShowsThePlayerThatLastStartedPlaying)
 {

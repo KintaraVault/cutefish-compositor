@@ -14,6 +14,9 @@ namespace cutefish::shell {
 class NotificationSettings;
 class Shell;
 class MenuBar;
+class MprisPlayer;
+
+MediaState mediaState(const MprisPlayer *player);
 
 // The session's: NetworkManager and BlueZ on the system bus, PipeWire,
 // org.cutefish.Privacy's switches, the Appearance service, and the bar's
