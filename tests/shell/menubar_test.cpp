@@ -563,12 +563,14 @@ public:
         player.addProperty("CanControl", [] { return true; });
         player.addProperty("CanGoNext", [] { return true; });
         player.addProperty("CanSeek", [] { return true; });
-        player.addProperty("Position", [this] { return position; });
+        player.addProperty("Position", [this] { ++positionReads; return position; });
         player.addProperty("Metadata", [this] { return metadata; });
         for (const char *method : {"Play", "Pause", "PlayPause", "Next", "Previous", "Stop"})
             player.addMethod(method, [this, method] { calls.push_back(method); });
         player.addMethod("SetPosition", [this](dbus::ObjectPath id, int64_t value) {
             soughtTrack = id.path;
+            if (delaySeek)
+                return;
             position = value;
             player.emitSignal("Seeked", position);
         });
@@ -596,6 +598,8 @@ public:
     std::string soughtTrack;
     int64_t position = 0;
     int64_t relativeSeek = 0;
+    int positionReads = 0;
+    bool delaySeek = false;
 };
 
 } // namespace
@@ -628,6 +632,7 @@ TEST(MprisTest, ProjectsTheRealPositionAndSeeksTheCurrentTrack)
     player->setPosition(53.25);
     ASSERT_TRUE(test::runUntil([&] { return music.soughtTrack == "/song/one"; }));
     EXPECT_EQ(music.position, 53250000);
+    test::runFor(std::chrono::milliseconds(1150));
     music.player.emitSignal("Seeked", int64_t(64000000));
     ASSERT_TRUE(test::runUntil([&] { return player->position() == 64.; }));
     music.position = 81000000;
@@ -640,12 +645,47 @@ TEST(MprisTest, ProjectsTheRealPositionAndSeeksTheCurrentTrack)
     EXPECT_FALSE(player->canSetPosition());
 }
 
+TEST(MprisTest, KeepsTheSeekTargetUntilSpotifyStylePositionCatchesUp)
+{
+    using namespace std::chrono_literals;
+    test::DBusTestClient client;
+    FakePlayer music(client.connection.get(), "DelayedSeek");
+    music.metadata = {{"mpris:trackid", dbus::Variant(std::string("/com/spotify/track/test"))},
+                      {"mpris:length", dbus::Variant(uint64_t(167346000))}};
+    music.status = "Paused";
+    music.position = 12000000;
+    music.delaySeek = true;
+    shell::MprisManager manager(sessionBus());
+    ASSERT_TRUE(test::runUntil([&] { return manager.current() && manager.current()->isReady(); }));
+    auto *player = manager.current();
+    EXPECT_DOUBLE_EQ(player->duration(), 167.346);
+    ASSERT_TRUE(player->canSetPosition());
+    const auto reads = music.positionReads;
+    player->setPosition(100.);
+    ASSERT_TRUE(test::runUntil([&] { return music.positionReads > reads && !music.soughtTrack.empty(); }));
+    EXPECT_EQ(music.soughtTrack, "/com/spotify/track/test");
+    test::runFor(40ms);
+    EXPECT_EQ(player->position(), 100.);
+    music.player.emitSignal("Seeked", music.position); // Late signal for the old position.
+    test::runFor(40ms);
+    EXPECT_EQ(player->position(), 100.);
+    music.position = 100200000;
+    player->refreshPosition();
+    ASSERT_TRUE(test::runUntil([&] { return player->position() == 100.2; }));
+
+    // A player ignoring a seek must not leave the UI pinned indefinitely.
+    player->setPosition(140.);
+    test::runFor(1200ms);
+    player->refreshPosition();
+    ASSERT_TRUE(test::runUntil([&] { return player->position() == 100.2; }));
+}
+
 TEST(MprisTest, RecognizesAStalledEndAndDoesNotSkipTheNextTrack)
 {
     test::DBusTestClient client;
     FakePlayer music(client.connection.get(), "TrackEnd");
     music.metadata = {{"mpris:trackid", dbus::Variant(dbus::ObjectPath {"/song/one"})},
-                      {"mpris:length", dbus::Variant(int64_t(3000000))}};
+                      {"mpris:length", dbus::Variant(uint64_t(3000000))}};
     music.position = 2000000;
     music.status = "Playing";
     shell::MprisManager manager(sessionBus());

@@ -587,44 +587,65 @@ class MediaTile::Progress final : public ui::View
 {
 public:
     bool acceptsPointer() const override { return m_seekable; }
-    std::optional<double> preview;
     std::function<void()> changed;
     std::function<void(double)> committed;
 
     void setTrack(double duration, bool seekable, bool reset)
     {
         m_duration = duration;
-        m_seekable = seekable;
-        if ((reset || !seekable) && preview) {
-            preview.reset();
+        if (m_seekable != seekable) {
+            m_seekable = seekable;
             requestPaint();
         }
+        if (reset || !seekable)
+            m_preview.reset();
+        if (reset)
+            m_position.reset();
     }
 
-    void setFraction(double fraction)
+    std::optional<double> updatePosition(std::optional<double> position, std::chrono::steady_clock::time_point now)
     {
-        if (fraction == m_fraction)
-            return;
-        m_fraction = fraction;
-        requestPaint();
+        const auto target = m_preview ? m_preview : position;
+        const auto oldEmphasis = m_emphasis;
+        const auto elapsed = std::chrono::duration<double>(now - std::exchange(m_frameTime, now)).count();
+        // Follow the latest target from the already painted position. This
+        // also handles a new seek or a drag reversal mid-animation.
+        const auto approach = [elapsed](double from, double to, double timeConstant, double snap) {
+            const double next = std::lerp(from, to, -std::expm1(-elapsed / timeConstant));
+            return std::abs(next - to) <= snap ? to : next;
+        };
+        if (target && m_position && m_duration > 0) {
+            const double snap = std::clamp(m_duration * .0002, .001, .05);
+            m_position = approach(*m_position, *target, m_preview ? .032 : .048, snap);
+        } else {
+            m_position = target;
+        }
+        m_emphasis = approach(m_emphasis, m_seekable && (m_preview || isHovered()) ? 1. : 0., .035, .01);
+        const double fraction = m_position && m_duration > 0 ? std::clamp(*m_position / m_duration, 0., 1.) : 0;
+        if (fraction != m_fraction || oldEmphasis != m_emphasis) {
+            m_fraction = fraction;
+            requestPaint();
+        }
+        return m_position;
     }
 
 protected:
     void paint(ui::Painter &painter) override
     {
-        const double h = preview || isHovered() ? 7 : 5;
+        const double h = 5 + 2 * m_emphasis;
         const ui::RectF track {0, (geometry().height - h) / 2, geometry().width, h};
         painter.fillRoundedRect(track, h / 2, kWhite.withAlpha(.23));
         if (m_fraction > 0) {
             const double width = std::min(track.width, std::max(h, track.width * m_fraction));
             painter.fillRoundedRect({0, track.y, width, h}, h / 2, kWhite.withAlpha(.87));
         }
-        if (m_seekable && (preview || isHovered())) {
-            const double cx = std::clamp(track.width * m_fraction, h / 2, std::max(h / 2, track.width - h / 2));
-            painter.fillRoundedRect({cx - 4.5, (geometry().height - 9) / 2, 9, 9}, 4.5, kWhite);
+        if (m_emphasis > 0) {
+            const double radius = 3.5 + m_emphasis;
+            const double cx = std::lerp(radius, std::max(radius, track.width - radius), m_fraction);
+            painter.fillRoundedRect({cx - radius, geometry().height / 2 - radius, 2 * radius, 2 * radius},
+                                    radius, kWhite.withAlpha(m_emphasis));
         }
     }
-    void hoverChanged() override { requestPaint(); }
     void pointerPress(const ui::PointerEvent &event) override
     {
         if (event.button == ui::MouseButton::Left && m_seekable)
@@ -632,25 +653,27 @@ protected:
     }
     void pointerMove(const ui::PointerEvent &event) override
     {
-        if (preview)
+        if (m_preview)
             update(event.position.x);
     }
     void pointerRelease(const ui::PointerEvent &event) override
     {
-        if (event.button != ui::MouseButton::Left || !preview)
+        if (event.button != ui::MouseButton::Left || !m_preview)
             return;
-        const double seconds = offset(event.position.x);
-        preview.reset();
-        committed(seconds);
+        m_preview.reset();
+        committed(offset(event.position.x));
         changed();
-        requestPaint();
     }
 
 private:
     double offset(double x) const { return std::clamp(x / std::max(1., geometry().width), 0., 1.) * m_duration; }
-    void update(double x) { preview = offset(x); changed(); requestPaint(); }
+    void update(double x) { m_preview = offset(x); changed(); }
+    std::optional<double> m_preview;
+    std::optional<double> m_position;
+    std::chrono::steady_clock::time_point m_frameTime;
     double m_duration = 0;
     double m_fraction = 0;
+    double m_emphasis = 0;
     bool m_seekable = false;
 };
 
@@ -732,10 +755,9 @@ void MediaTile::updateTimeline()
         pollPosition();
         m_nextPoll = now + std::chrono::seconds(1);
     }
-    const auto pos = m_progress->preview ? m_progress->preview : position ? position() : std::nullopt;
+    const auto pos = m_progress->updatePosition(position ? position() : std::nullopt, now);
     m_elapsed->setText(pos ? formatMediaTime(*pos) : "–:––");
     m_remaining->setText(pos && m_duration > 0 ? formatMediaTime(std::max(0., m_duration - *pos), true) : "–:––");
-    m_progress->setFraction(pos && m_duration > 0 ? std::clamp(*pos / m_duration, 0., 1.) : 0);
 }
 
 void MediaTile::animateTimeline()

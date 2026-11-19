@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "base/strings.h"
 
@@ -56,7 +57,7 @@ MprisPlayer::MprisPlayer(dbus::Connection *bus, std::string service)
         rule.member = "Seeked";
         m_matches.push_back(m_bus->subscribe(rule, [this](const dbus::Message &message) {
             int64_t position;
-            if (!m_seekRequest && m_sender.accepts(message) && message.read(position)) {
+            if (m_sender.accepts(message) && message.read(position) && !isStaleSeekPosition(position / 1e6)) {
                 const bool ended = std::exchange(m_atEnd, false);
                 m_nearEndPosition.reset();
                 samplePosition(std::max(int64_t(0), position) / 1e6);
@@ -104,8 +105,10 @@ void MprisPlayer::apply(const std::string &interface, const dbus::VariantMap &pr
         const auto currentStatus = playbackStatus();
         const bool trackChanged = oldTrack != trackId() || oldDuration != duration()
                 || (!hasTrackPath() && oldTitle != title());
-        if (trackChanged || currentStatus == PlaybackStatus::Stopped)
+        if (trackChanged || currentStatus == PlaybackStatus::Stopped) {
             m_seekRequest.reset();
+            m_seekGuardUntil = {};
+        }
         if (trackChanged || currentStatus == PlaybackStatus::Stopped
                 || (currentStatus == PlaybackStatus::Playing && status != currentStatus)) {
             m_atEnd = false;
@@ -113,7 +116,7 @@ void MprisPlayer::apply(const std::string &interface, const dbus::VariantMap &pr
         }
         if (const auto pos = properties.find("Position"); pos != properties.end()) {
             const auto micros = pos->second.get<int64_t>();
-            if (!m_seekRequest)
+            if (!isStaleSeekPosition(micros.value_or(0) / 1e6))
                 samplePosition(micros && *micros >= 0 ? std::optional<double>(*micros / 1e6) : std::nullopt);
         } else if (currentStatus == PlaybackStatus::Stopped || trackChanged) {
             samplePosition(std::nullopt);
@@ -222,10 +225,21 @@ dbus::ObjectPath MprisPlayer::trackId() const
     return {it->second.value<std::string>()};
 }
 
-double MprisPlayer::duration() const
+int64_t MprisPlayer::durationMicros() const
 {
     const auto it = m_metadata.find("mpris:length");
-    return it == m_metadata.end() ? 0 : std::max(int64_t(0), it->second.value<int64_t>()) / 1e6;
+    if (it == m_metadata.end())
+        return 0;
+    if (const auto length = it->second.get<int64_t>())
+        return std::max(int64_t(0), *length);
+    // Spotify sends an unsigned duration, although MPRIS specifies int64.
+    const auto length = it->second.value<uint64_t>();
+    return length <= uint64_t(std::numeric_limits<int64_t>::max()) ? int64_t(length) : 0;
+}
+
+double MprisPlayer::duration() const
+{
+    return durationMicros() / 1e6;
 }
 
 void MprisPlayer::samplePosition(std::optional<double> seconds)
@@ -251,6 +265,8 @@ std::optional<double> MprisPlayer::position() const
 
 void MprisPlayer::observePosition(double seconds)
 {
+    if (isStaleSeekPosition(seconds))
+        return;
     const bool wasAtEnd = m_atEnd;
     const bool wasSeekable = canSetPosition();
     const double length = duration();
@@ -269,6 +285,19 @@ void MprisPlayer::observePosition(double seconds)
     samplePosition(m_atEnd ? length : seconds);
     if (wasAtEnd != m_atEnd || wasSeekable != canSetPosition())
         changed();
+}
+
+bool MprisPlayer::isStaleSeekPosition(double seconds) const
+{
+    // Some players acknowledge SetPosition before Position reflects the seek.
+    // Keep a brief window for the player to catch up, but still reconcile if
+    // the seek was silently ignored or the player landed somewhere else.
+    if (m_seekRequest)
+        return true;
+    if (std::chrono::steady_clock::now() >= m_seekGuardUntil)
+        return false;
+    const auto expected = position();
+    return expected && std::abs(seconds - *expected) > .35;
 }
 
 void MprisPlayer::refreshPosition()
@@ -315,7 +344,7 @@ void MprisPlayer::setPosition(double seconds)
 {
     if (!canSetPosition() || !std::isfinite(seconds))
         return;
-    const auto length = m_metadata.at("mpris:length").value<int64_t>();
+    const int64_t length = durationMicros();
     const int64_t micros = std::llround(std::clamp(static_cast<long double>(seconds) * 1e6L,
                                                   0.L, static_cast<long double>(length - 1)));
     const auto before = position();
@@ -324,6 +353,7 @@ void MprisPlayer::setPosition(double seconds)
     const auto request = ++m_seekSerial;
     const bool allowFallback = !m_seekRequest;
     m_seekRequest = request;
+    m_seekGuardUntil = {};
     samplePosition(micros / 1e6);
     const bool absolute = hasTrackPath();
     sendSeek(request, micros, absolute && !allowFallback ? std::nullopt : before, absolute);
@@ -344,6 +374,8 @@ void MprisPlayer::sendSeek(uint64_t request, int64_t micros, std::optional<doubl
                     m_seekRequest.reset();
                     if (reply.isError())
                         samplePosition(before);
+                    else
+                        m_seekGuardUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(1100);
                     refreshPosition();
                 }
             }

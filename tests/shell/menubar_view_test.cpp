@@ -294,9 +294,9 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     player.addProperty("Metadata", [&] {
         return dbus::VariantMap {{"xesam:title", dbus::Variant(std::string("A Weekday In A Small Town"))},
                                 {"xesam:artist", dbus::Variant(std::vector<std::string>{"FSM Team"})},
-                                {"mpris:trackid", dbus::Variant(dbus::ObjectPath {"/song/one"})},
+                                {"mpris:trackid", dbus::Variant(std::string("/song/one"))},
                                 {"mpris:artUrl", dbus::Variant(coverPath)},
-                                {"mpris:length", dbus::Variant(int64_t(240000000))}};
+                                {"mpris:length", dbus::Variant(uint64_t(240000000))}};
     });
     for (const char *name : {"CanControl", "CanPause", "CanPlay", "CanSeek", "CanGoNext", "CanGoPrevious"})
         player.addProperty(name, [] { return true; });
@@ -368,8 +368,23 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     ASSERT_TRUE(test::runUntil([&] { return transport == "Next"; }));
     const auto progress = std::ranges::find_if(tile->children(), [](const auto &child) { return child->name() == "media-progress"; });
     ASSERT_NE(progress, tile->children().end());
+    const auto named = [&](const char *name) -> const ui::Label * {
+        const auto it = std::ranges::find_if(tile->children(), [name](const auto &child) { return child->name() == name; });
+        return it == tile->children().end() ? nullptr : dynamic_cast<const ui::Label *>(it->get());
+    };
+    const auto *elapsed = named("media-elapsed");
+    const auto *remaining = named("media-remaining");
+    ASSERT_NE(elapsed, nullptr);
+    ASSERT_NE(remaining, nullptr);
+    EXPECT_EQ(remaining->text(), "−3:54");
     clickChild(progress->get());
     ASSERT_TRUE(test::runUntil([&] { return position == 120000000; }));
+    frames(32);
+    EXPECT_NE(elapsed->text(), "0:06");
+    EXPECT_NE(elapsed->text(), "2:00"); // The thumb and its clock are still in flight.
+    frames(430);
+    EXPECT_EQ(elapsed->text(), "2:00");
+    EXPECT_EQ(remaining->text(), "−2:00");
     const auto slider = onScreen(progress->get());
     const auto atFraction = [&](double fraction) { return bounds.x() + slider.x + slider.width * fraction; };
     const auto y = bounds.y() + slider.y + slider.height / 2;
@@ -379,9 +394,14 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     EXPECT_EQ(position, 120000000); // Preview while dragging, send on release.
     input.onPointerButton(at(time += 20), BTN_LEFT, false);
     ASSERT_TRUE(test::runUntil([&] { return position == 180000000; }));
+    frames(32);
+    EXPECT_NE(elapsed->text(), "3:00");
     key(KEY_LEFT);
     ASSERT_TRUE(test::runUntil([&] { return position != 180000000; }));
     EXPECT_NEAR(position, 175000000, 2);
+    frames(460);
+    EXPECT_EQ(elapsed->text(), "2:55");
+    EXPECT_EQ(remaining->text(), "−1:05");
     key(KEY_ESC);
     frames(205);
     EXPECT_FALSE(bar->panelOpen());

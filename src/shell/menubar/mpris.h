@@ -82,6 +82,8 @@ private:
     void callPlayer(const char *method);
     void samplePosition(std::optional<double> seconds);
     void observePosition(double seconds);
+    bool isStaleSeekPosition(double seconds) const;
+    int64_t durationMicros() const;
     bool hasTrackPath() const;
     void sendSeek(uint64_t request, int64_t micros, std::optional<double> before, bool absolute);
 
@@ -106,6 +108,7 @@ private:
     uint64_t m_positionRevision = 0;
     uint64_t m_seekSerial = 0;
     std::optional<uint64_t> m_seekRequest;
+    std::chrono::steady_clock::time_point m_seekGuardUntil;
     bool m_readingPosition = false;
     bool m_readPositionAgain = false;
 };
