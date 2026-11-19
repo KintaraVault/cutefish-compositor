@@ -294,7 +294,7 @@ void WindowAnimation::releaseRenderResources()
 
 void WindowAnimation::start(Type type, const base::Rect &from, const base::Rect &to, bool requestFrame)
 {
-    if (m_style == Style::None) {
+    if (m_style == Style::None || (type == Type::Open && !m_animateOpening)) {
         skip(type);
         return;
     }

@@ -81,6 +81,7 @@ struct ShellWindowMetadata {
     int edgeReach = 0;
     // An embedded panel can own its entry and exit transitions. Read at map time.
     bool animateVisibility = true;
+    bool animateOpening = true;
 };
 
 // Everything a window is announced with. The application id and the process id

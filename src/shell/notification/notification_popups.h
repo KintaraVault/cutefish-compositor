@@ -74,6 +74,7 @@ public:
 
         void updateTimer();
         void applyPosition();
+        void applyPresentation();
 
         NotificationPopups *m_popups;
         Notification m_notification;
@@ -81,10 +82,12 @@ public:
         NotificationCard *m_card = nullptr;
         std::unique_ptr<Tween> m_stackY;
         std::unique_ptr<Tween> m_reveal;
+        std::unique_ptr<Tween> m_swipe;
         base::Point m_stack;
         bool m_placed = false;
         bool m_shown = false;
         bool m_timerRunning = false;
+        bool m_swiping = false;
         base::Timer m_timer;
         int m_height = 0;
     };

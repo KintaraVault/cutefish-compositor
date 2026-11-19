@@ -86,6 +86,7 @@ public:
     void setStyle(Style style);
 
     Style style() const { return m_style; }
+    void setAnimateOpening(bool animate) { m_animateOpening = animate; }
 
     // Where a running DragBounds animation is heading now. The drag moves the
     // window on every pointer motion, so the outgoing appearance has to be
@@ -363,6 +364,7 @@ private:
     mutable double m_firstStepAt = -1;
     mutable bool m_running = false;
     mutable bool m_firstFrame = true;
+    bool m_animateOpening = true;
     bool m_closing = false;
     bool m_boundsContentReady = true;
     float m_startOpacity = 1;

@@ -376,6 +376,12 @@ void ShellWindow::setPopupGrab(bool grab)
         m_shellSurface->ungrab();
 }
 
+void ShellWindow::setAnimateOpening(bool animate)
+{
+    m_metadata.animateOpening = animate;
+    m_shell->windowManager()->setShellMetadata(m_surface.get(), m_metadata);
+}
+
 void ShellWindow::show()
 {
     if (m_shown || m_size.isEmpty() || !m_window)

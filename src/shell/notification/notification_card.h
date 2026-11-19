@@ -72,6 +72,11 @@ public:
 
     std::function<void()> onClicked;
     std::function<void()> onCloseClicked;
+    // A signed horizontal swipe offset, or zero to settle back into place.
+    std::function<void(double offset, bool active)> onSwipe;
+    // Direction is -1/1 after a completed swipe, zero for middle click.
+    std::function<void(int direction)> onDismiss;
+    void cancelSwipe();
     std::function<void(const std::string &key)> onActionClicked;
     std::function<void()> onHoveredChanged;
     // The height it asks for changed: text, picture, actions or a button.
@@ -82,6 +87,8 @@ public:
 protected:
     void pointerPress(const ui::PointerEvent &event) override;
     void pointerRelease(const ui::PointerEvent &event) override;
+    bool scroll(const ui::ScrollEvent &event) override;
+    bool gesture(const ui::GestureEvent &event) override;
     void hoverChanged() override;
     void layout() override;
     void paint(ui::Painter &painter) override;
@@ -109,6 +116,8 @@ private:
 
     Geometry computeGeometry(double width) const;
     void updateClose();
+    void updateSwipe(ui::PointF delta);
+    void finishSwipe(bool cancelled);
     void heightMayHaveChanged();
     void updateBody();
     ui::Color secondaryTextColor() const;
@@ -119,6 +128,9 @@ private:
     std::string m_moreText;
     bool m_detailed = false;
     bool m_pressed = false;
+    bool m_middlePressed = false;
+    bool m_swiping = false;
+    ui::PointF m_swipeDelta;
     ui::Color m_surface;
     bool m_thumbnailFailed = false;
     bool m_thumbnailReady = false;

@@ -17,6 +17,7 @@
 #include "shell/shell_window.h"
 #include "toolkit/compositor_colors.h"
 #include "ui/embedded_window.h"
+#include "ui/geometry_conversions.h"
 #include "ui/path.h"
 #include "ui/theme.h"
 #include "wm/window.h"
@@ -43,8 +44,10 @@ public:
 protected:
     void layout() override
     {
+        auto bounds = localRect();
+        bounds.x = m_banner->m_swipe ? m_banner->m_swipe->value() : 0;
         for (const auto &child : children())
-            child->setGeometry(localRect());
+            child->setGeometry(bounds);
     }
 
     void paint(ui::Painter &) override
@@ -69,6 +72,7 @@ NotificationPopups::Banner::Banner(NotificationPopups *popups, const Notificatio
 {
     Shell *shell = popups->m_shell;
     m_window = std::make_unique<ShellWindow>(shell, wm::WindowRole::Notification);
+    m_window->setAnimateOpening(false);
     m_window->setFocusPolicy(wm::FocusPolicy::NoFocus);
     if (const Shell::Output *output = shell->output({}))
         m_window->setOutput(output->name);
@@ -83,12 +87,13 @@ NotificationPopups::Banner::Banner(NotificationPopups *popups, const Notificatio
     m_stackY = std::make_unique<Tween>(window);
     m_stackY->onChanged = [this] { applyPosition(); };
     m_reveal = std::make_unique<Tween>(window, std::chrono::milliseconds(240), outCubic);
-    m_reveal->onChanged = [this] {
-        if (auto *surface = m_window->wmWindow()) {
-            const double progress = m_reveal->value();
-            surface->setPresentationOffset({int(std::lround(30 * (1 - progress))), 0});
-            surface->setOpacity(float(progress));
-        }
+    m_reveal->onChanged = [this] { applyPresentation(); };
+    m_swipe = std::make_unique<Tween>(window, std::chrono::milliseconds(180), outCubic);
+    m_swipe->onChanged = [this] {
+        auto bounds = m_card->geometry();
+        bounds.x = m_swipe->value();
+        m_card->setGeometry(bounds);
+        updateGlass();
     };
 
     m_timer.setSingleShot(true);
@@ -106,6 +111,20 @@ NotificationPopups::Banner::Banner(NotificationPopups *popups, const Notificatio
         model.close(bannerId);
     };
     m_card->onCloseClicked = [&model, bannerId] { model.close(bannerId); };
+    m_card->onDismiss = [this, &model, bannerId](int direction) {
+        if (!direction) {
+            model.close(bannerId);
+            return;
+        }
+        m_card->setEnabled(false);
+        m_swipe->onFinished = [&model, bannerId] { model.close(bannerId); };
+        m_swipe->setTarget(direction * kWidth, true);
+    };
+    m_card->onSwipe = [this](double offset, bool active) {
+        m_swiping = active;
+        m_swipe->setTarget(offset, !active);
+        updateTimer();
+    };
     m_card->onActionClicked = [&model, bannerId](const std::string &key) {
         model.invokeAction(bannerId, key);
         model.close(bannerId);
@@ -126,6 +145,7 @@ NotificationPopups::Banner::~Banner()
     m_timer.stop();
     m_stackY.reset();
     m_reveal.reset();
+    m_swipe.reset();
     m_window.reset();
 }
 
@@ -166,7 +186,7 @@ int NotificationPopups::Banner::height() const
 void NotificationPopups::Banner::updateTimer()
 {
     // A timer that runs again starts from its full interval.
-    const bool running = m_shown && timeout().count() > 0 && !m_card->isHovered();
+    const bool running = m_shown && timeout().count() > 0 && !m_card->isHovered() && !m_swiping;
     if (running == m_timerRunning)
         return;
     m_timerRunning = running;
@@ -180,9 +200,16 @@ void NotificationPopups::Banner::updateGlass()
 {
     auto glass = notificationGlass();
     const ui::RectF rect {0, 0, kWidth, double(m_height)};
+    auto lens = rect;
+    lens.x = m_swipe ? m_swipe->value() : 0;
     ui::Path shape;
-    shape.addRoundedRect(rect, kRadius, kRadius);
-    glass.lenses.push_back({{0, 0, kWidth, double(m_height)}, kRadius, -1, 1, {},
+    shape.addRoundedRect(lens, kRadius, kRadius);
+    if (lens.x != 0) {
+        ui::Path viewport;
+        viewport.addRect(rect);
+        shape = shape.intersected(viewport);
+    }
+    glass.lenses.push_back({ui::toBase(lens), kRadius, -1, 1, ui::toBase(rect),
                             notificationFinish(ui::Theme::current().darkMode)});
     m_window->setBackgroundBlur({0, 0, kWidth, m_height}, int(kRadius), glass, shape);
 }
@@ -209,6 +236,15 @@ void NotificationPopups::Banner::applyPosition()
     m_window->setPosition(base::Point(m_stack.x(), int(std::lround(m_stackY->value()))));
 }
 
+void NotificationPopups::Banner::applyPresentation()
+{
+    if (auto *surface = m_window->wmWindow()) {
+        const double progress = m_reveal->value();
+        surface->setPresentationOffset({int(std::lround(30 * (1 - progress))), 0});
+        surface->setOpacity(float(progress));
+    }
+}
+
 void NotificationPopups::Banner::setShown(bool shown)
 {
     if (shown == m_shown)
@@ -217,9 +253,14 @@ void NotificationPopups::Banner::setShown(bool shown)
     if (shown) {
         m_window->show();
         m_reveal->snap(0);
-        m_reveal->onChanged();
+        applyPresentation();
         m_reveal->setTarget(1, true);
     } else {
+        m_card->cancelSwipe();
+        m_swipe->onFinished = {};
+        m_swipe->snap(0);
+        m_swiping = false;
+        m_card->setEnabled(true);
         m_reveal->snap(1);
         m_window->hide();
     }

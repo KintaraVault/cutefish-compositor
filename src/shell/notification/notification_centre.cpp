@@ -81,6 +81,7 @@ NotificationCentre::Row::Row(NotificationCentre *centre, ui::Window *window)
     , m_y(window)
     , m_contentY(window)
     , m_horizontal(window, std::chrono::milliseconds(260), outCubic)
+    , m_swipe(window, std::chrono::milliseconds(180), outCubic)
     , m_opacity(window)
     , m_scale(window)
     , m_frameHeight(window)
@@ -101,6 +102,7 @@ NotificationCentre::Row::Row(NotificationCentre *centre, ui::Window *window)
     m_y.onChanged = [this] { place(); };
     m_contentY.onChanged = [this] { placeContent(); };
     m_horizontal.onChanged = [this] { placeContent(); };
+    m_swipe.onChanged = [this] { placeContent(); };
     m_opacity.onChanged = [this] { placeContent(); };
     m_scale.onChanged = [this] { placeContent(); };
     m_frameHeight.onChanged = [this] { placeContent(); };
@@ -116,6 +118,11 @@ NotificationCentre::Row::Row(NotificationCentre *centre, ui::Window *window)
             m_centre->dismissGroup(m_groupKey);
         else
             m_centre->dismissRows([this](const Row &row) { return &row == this; });
+    };
+    m_card->onSwipe = [this](double offset, bool active) { m_swipe.setTarget(offset, !active); };
+    m_card->onDismiss = [this](int direction) {
+        m_swipeDirection = direction;
+        m_card->onCloseClicked();
     };
     // Deferred: the layout pass writes what the target height reads.
     m_card->onImplicitHeightChanged = [this] { m_centre->scheduleLayout(); };
@@ -185,6 +192,12 @@ void NotificationCentre::Row::arrive()
     m_opacity.snap(0);
 }
 
+void NotificationCentre::Row::resetSwipe()
+{
+    m_card->cancelSwipe();
+    m_swipe.snap(0);
+}
+
 bool NotificationCentre::Row::isSeenWithin(double top, double bottom, double y) const
 {
     const double height = contentHeight();
@@ -205,7 +218,9 @@ void NotificationCentre::Row::apply(bool animated)
     // Hidden, the content sits just above the row, behind the card before
     // it, so showing it slides it down out of the stack.
     m_contentY.setTarget(shown || dismissing ? 0 : -contentHeight(), animated);
-    m_horizontal.setTarget(dismissing ? 22 : 0, animated);
+    m_horizontal.setTarget(dismissing && !m_swipeDirection ? 22 : 0, animated);
+    if (dismissing && m_swipeDirection)
+        m_swipe.setTarget(m_swipeDirection * kCardWidth, animated);
     m_opacity.setTarget(shown ? 1 : 0, animated);
     m_scale.setTarget(shown ? 1 : dismissing ? 0.92 : 0.94, animated);
     m_bottomOrigin = !dismissing;
@@ -240,7 +255,7 @@ void NotificationCentre::Row::placeContent()
 {
     const double width = kCardWidth;
     const double height = m_card->implicitHeight(width) + peekCount() * kPeekStep;
-    m_content->setGeometry({kInset + pixelAligned(m_horizontal), pixelAligned(m_contentY), width, height});
+    m_content->setGeometry({kInset + pixelAligned(m_horizontal) + pixelAligned(m_swipe), pixelAligned(m_contentY), width, height});
     m_content->setOpacity(m_opacity.value());
     const double scale = m_scale.value();
     ui::Transform transform;
@@ -598,6 +613,7 @@ void NotificationCentre::open(ShellWindow *parent, const base::Point &position)
     m_scroll->setScrollPosition({0, 0});
     m_window->show();
     if (auto *window = shellWindow()) {
+        window->setAnimateOpening(false);
         window->setInputRegion(std::nullopt);
         window->setPopupGrab(!m_editingWidgets);
     }
@@ -700,8 +716,10 @@ void NotificationCentre::onHidden()
     }
     disarmClears(std::nullopt);
     m_expanded.clear();
-    for (Row *row : m_rows)
+    for (Row *row : m_rows) {
+        row->resetSwipe();
         row->setDetailed(false);
+    }
     relayout();
     pruneHeaders();
 }

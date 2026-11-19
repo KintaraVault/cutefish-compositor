@@ -5,7 +5,10 @@ in as a right-aligned column, without an enclosing sheet. Related notifications
 stack; select the top card to expand the group. **Clear All Notifications**
 appears after the notification list. The heading is replaced by **No recent
 notifications** when history is empty. Notifications keep using the compositor's
-existing desktop notification service, history and actions.
+existing desktop notification service, history and actions. Middle-click a
+card or swipe it horizontally on a touchpad to dismiss it without opening the
+notification. A short or cancelled swipe returns the card to its slot; a
+collapsed stack is dismissed as a group, like its close button.
 
 **Edit Widgets** opens the same searchable gallery as the desktop context menu
 and the Control Center shortcut. Click a preview to add an instance to the

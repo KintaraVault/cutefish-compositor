@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 
 #include "base/process.h"
 #include "shell/notification/notification_controls.h"
@@ -527,12 +528,21 @@ void NotificationCard::hoverChanged()
 
 void NotificationCard::pointerPress(const ui::PointerEvent &event)
 {
-    m_pressed = event.button == ui::MouseButton::Left;
+    if (event.button == ui::MouseButton::Left)
+        m_pressed = true;
+    if (event.button == ui::MouseButton::Middle)
+        m_middlePressed = true;
 }
 
 void NotificationCard::pointerRelease(const ui::PointerEvent &event)
 {
-    if (!m_pressed)
+    if (event.button == ui::MouseButton::Middle) {
+        const bool dismiss = std::exchange(m_middlePressed, false) && localRect().contains(event.position);
+        if (dismiss && onDismiss)
+            onDismiss(0);
+        return;
+    }
+    if (event.button != ui::MouseButton::Left || !m_pressed)
         return;
     m_pressed = false;
     if (!localRect().contains(event.position))
@@ -548,6 +558,74 @@ void NotificationCard::pointerRelease(const ui::PointerEvent &event)
     }
     if (onClicked)
         onClicked();
+}
+
+bool NotificationCard::scroll(const ui::ScrollEvent &event)
+{
+    if (!onSwipe || !event.precise)
+        return false;
+    if (event.stop) {
+        if (!m_swiping)
+            return false;
+        finishSwipe(false);
+        return true;
+    }
+    // Leave vertical trackpad scrolling (including its stop event) to the list.
+    if (!m_swiping && std::abs(event.deltaX) <= std::abs(event.deltaY) * 1.25)
+        return false;
+    m_swiping = true;
+    updateSwipe({-event.deltaX, -event.deltaY});
+    return true;
+}
+
+bool NotificationCard::gesture(const ui::GestureEvent &event)
+{
+    using Type = ui::GestureEvent::Type;
+    if (!onSwipe)
+        return false;
+    if (event.type == Type::SwipeBegin) {
+        if (m_swiping)
+            finishSwipe(true);
+        m_swiping = true;
+        m_swipeDelta = {};
+        return true;
+    }
+    if (!m_swiping)
+        return false;
+    if (event.type == Type::SwipeUpdate) {
+        updateSwipe(event.delta);
+        return true;
+    }
+    if (event.type == Type::SwipeEnd) {
+        finishSwipe(event.cancelled);
+        return true;
+    }
+    return false;
+}
+
+void NotificationCard::updateSwipe(ui::PointF delta)
+{
+    m_swipeDelta += delta;
+    const double dx = m_swipeDelta.x;
+    const double offset = std::abs(dx) > std::abs(m_swipeDelta.y) * 1.25
+            ? std::clamp(dx, -geometry().width * .55, geometry().width * .55) : 0;
+    onSwipe(offset, true);
+}
+
+void NotificationCard::finishSwipe(bool cancelled)
+{
+    m_swiping = false;
+    const auto delta = std::exchange(m_swipeDelta, ui::PointF());
+    if (!cancelled && std::abs(delta.x) >= 72 && std::abs(delta.x) > std::abs(delta.y) * 1.25 && onDismiss)
+        onDismiss(delta.x > 0 ? 1 : -1);
+    else
+        onSwipe(0, false);
+}
+
+void NotificationCard::cancelSwipe()
+{
+    if (m_swiping)
+        finishSwipe(true);
 }
 
 void NotificationCard::layout()

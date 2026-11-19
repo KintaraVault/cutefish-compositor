@@ -190,6 +190,8 @@ public:
     ShellWindow *root();
     // A shell popup may temporarily share the pointer with an editor.
     void setPopupGrab(bool grab);
+    // Own the reveal without changing the window manager's close animation.
+    void setAnimateOpening(bool animate);
     // Unmaps the window and lets go of its toolkit window, which is being
     // hidden or destroyed: nothing reaches it from here on.
     void release();

@@ -591,6 +591,10 @@ void WindowManager::setShellMetadata(compositor::Surface *surface,
     // that is not gets it in createWindow(), before it is placed or announced.
     if (Window *window = windowForSurface(surface)) {
         if (window->rootSurface() == surface) {
+            if (auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node()))
+                animation->setAnimateOpening(metadata.animateOpening);
+            if (window->isPopup())
+                return;
             window->setRole(metadata.role);
             window->setFocusPolicy(metadata.focusPolicy);
             window->setPanelBehavior(metadata.panelBehavior);
@@ -648,17 +652,21 @@ Window *WindowManager::createWindow(compositor::Surface *rootSurface, const Wind
     // lists it. Nothing here may be deferred to a signal handler running
     // after windowAdded.
     if (const ShellWindowMetadata *metadata = shellMetadata(rootSurface)) {
-        window->setRole(metadata->role);
-        if (!metadata->animateVisibility) {
-            if (auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node()))
+        if (!window->isPopup())
+            window->setRole(metadata->role);
+        if (auto *animation = dynamic_cast<scene::WindowAnimation *>(window->node())) {
+            animation->setAnimateOpening(metadata->animateOpening);
+            if (!metadata->animateVisibility)
                 animation->setStyle(scene::WindowAnimation::Style::None);
         }
-        window->setFocusPolicy(metadata->focusPolicy);
-        window->setPanelBehavior(metadata->panelBehavior);
-        window->setProtectedFromControl(metadata->protectedFromControl);
-        window->setEdgeReach(metadata->edgeReach);
-        if (metadata->role == WindowRole::Sheet)
-            attachSheet(window, metadata->parentWindow);
+        if (!window->isPopup()) {
+            window->setFocusPolicy(metadata->focusPolicy);
+            window->setPanelBehavior(metadata->panelBehavior);
+            window->setProtectedFromControl(metadata->protectedFromControl);
+            window->setEdgeReach(metadata->edgeReach);
+            if (metadata->role == WindowRole::Sheet)
+                attachSheet(window, metadata->parentWindow);
+        }
     }
 
     m_stackingOrder.push_back(window);

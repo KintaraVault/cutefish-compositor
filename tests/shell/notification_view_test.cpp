@@ -23,6 +23,7 @@
 #include "loop_test_util.h"
 #include "scene/node.h"
 #include "scene/scene.h"
+#include "scene/window_animation.h"
 #include "shell/common/file_thread.h"
 #include "shell/common/task_manager.h"
 #include "shell/notification/notification_card.h"
@@ -153,12 +154,22 @@ protected:
 
     void move(double x, double y) { input.onPointerMotionAbsolute(input::Timestamp(std::chrono::milliseconds(++ms)), {x, y}); }
 
-    void click(double x, double y)
+    void click(double x, double y, uint32_t button = BTN_LEFT)
     {
         move(x, y);
-        input.onPointerButton(input::Timestamp(std::chrono::milliseconds(++ms)), BTN_LEFT, true);
-        input.onPointerButton(input::Timestamp(std::chrono::milliseconds(++ms)), BTN_LEFT, false);
+        input.onPointerButton(input::Timestamp(std::chrono::milliseconds(++ms)), button, true);
+        input.onPointerButton(input::Timestamp(std::chrono::milliseconds(++ms)), button, false);
         frames();
+    }
+
+    void axis(double x, double y, bool discrete = false)
+    {
+        input.onPointerAxis(input::Timestamp(std::chrono::milliseconds(++ms)), {x, y}, discrete);
+    }
+
+    void axisStop()
+    {
+        input.onPointerAxisStop(input::Timestamp(std::chrono::milliseconds(++ms)));
     }
 
     void key(uint32_t code)
@@ -301,7 +312,17 @@ TEST_F(NotificationViewTest, ABannerShowsTopRightOnGlassAndTimesOut)
     EXPECT_EQ(base::Rect(0, 0, 380, window->bounds().height()), surface->backgroundBlurRect());
     ASSERT_EQ(1u, surface->glass().lenses.size());
     EXPECT_EQ(render::GlassFinish::NotificationLight, surface->glass().lenses.front().finish);
+    const auto *animation = dynamic_cast<const scene::WindowAnimation *>(window->node());
+    ASSERT_NE(nullptr, animation);
+    const int startOffset = window->presentationOffset().x();
+    EXPECT_GT(startOffset, 0);
+    scene.render(renderer);
+    EXPECT_FALSE(animation->isRunning()); // No generic open tween holding the first bounds.
+    frames(50);
+    scene.render(renderer);
+    EXPECT_LT(window->presentationOffset().x(), startOffset);
     EXPECT_GT(window->presentationOffset().x(), 0);
+    EXPECT_EQ(window->bounds().x() + window->presentationOffset().x(), animation->absoluteGeometry().x());
     frames(280);
     EXPECT_EQ(base::Point(), window->presentationOffset());
 
@@ -325,6 +346,40 @@ TEST_F(NotificationViewTest, ABannerShowsTopRightOnGlassAndTimesOut)
     frames();
     EXPECT_TRUE(popups().banners().empty());
     EXPECT_EQ(1, notifications->history().count());
+}
+
+TEST_F(NotificationViewTest, BannersDismissByMiddleClickOrTouchpadSwipeWithoutInvokingActions)
+{
+    const auto id = notify("Middle click", "Body", {"default", "Open"}, 0);
+    frames(255);
+    ASSERT_EQ(1u, popups().banners().size());
+    const auto where = popups().banners().front()->window()->geometry().center();
+    click(where.x(), where.y(), BTN_MIDDLE);
+    EXPECT_TRUE(popups().banners().empty());
+
+    const auto swipeId = notify("Swipe", "Body", {"default", "Open"}, 0);
+    frames(255);
+    ASSERT_EQ(1u, popups().banners().size());
+    auto *banner = popups().banners().front().get();
+    move(where.x(), where.y());
+    axis(0, 85);
+    axisStop();
+    EXPECT_DOUBLE_EQ(0, banner->card()->geometry().x);
+    axis(-27, 1);
+    EXPECT_DOUBLE_EQ(27, banner->card()->geometry().x);
+    axisStop();
+    frames(210);
+    EXPECT_DOUBLE_EQ(0, banner->card()->geometry().x);
+    axis(-54, 3);
+    axis(-52, 2);
+    EXPECT_DOUBLE_EQ(106, banner->card()->geometry().x);
+    axisStop();
+    frames(230);
+    EXPECT_TRUE(popups().banners().empty());
+    EXPECT_EQ((std::vector<uint32_t>{id, swipeId}), closedSignals(2));
+    EXPECT_EQ(0, notifications->history().count());
+    for (const auto &signal : client.signalsSeen)
+        EXPECT_NE("ActionInvoked", signal.member());
 }
 
 TEST_F(NotificationViewTest, TimeoutsFollowTheRequestAndTheUrgency)
@@ -485,6 +540,15 @@ TEST_F(NotificationViewTest, TheCentreOpensUnderTheBarAndTakesTheBanners)
     EXPECT_FALSE(window->surface()->backgroundBlurShape().isEmpty());
     EXPECT_GE(window->surface()->glass().lenses.size(), 2u);
     EXPECT_EQ(render::GlassFinish::NotificationLight, window->surface()->glass().lenses.front().finish);
+    const auto *animation = dynamic_cast<const scene::WindowAnimation *>(window->wmWindow()->node());
+    ASSERT_NE(nullptr, animation);
+    const int startOffset = window->wmWindow()->presentationOffset().x();
+    EXPECT_GT(startOffset, 0);
+    scene.render(renderer);
+    EXPECT_FALSE(animation->isRunning());
+    frames(50);
+    scene.render(renderer);
+    EXPECT_LT(window->wmWindow()->presentationOffset().x(), startOffset);
     EXPECT_GT(window->wmWindow()->presentationOffset().x(), 0);
     frames(300);
     EXPECT_EQ(base::Point(), window->wmWindow()->presentationOffset());
@@ -501,6 +565,11 @@ TEST_F(NotificationViewTest, TheCentreOpensUnderTheBarAndTakesTheBanners)
     frames();
     EXPECT_EQ(2u, centre().rows().size());
     EXPECT_LT(centre().rows().front()->contentOpacity(), 1);
+    const auto *arriving = centre().rows().front()->card();
+    const double arrivalX = arriving->mapToWindow({0, 0}).x;
+    frames(50);
+    EXPECT_LT(arriving->mapToWindow({0, 0}).x, arrivalX);
+    EXPECT_GT(arriving->mapToWindow({0, 0}).x, NotificationCentre::kInset);
     frames(410);
     EXPECT_DOUBLE_EQ(1, centre().rows().front()->contentOpacity());
 
@@ -524,6 +593,47 @@ TEST_F(NotificationViewTest, TheCentreOpensUnderTheBarAndTakesTheBanners)
     centre().toggle(menuBar.get(), base::Point(900, kMenuBar));
     centre().toggle(menuBar.get(), base::Point(900, kMenuBar));
     EXPECT_FALSE(centre().isOpen());
+}
+
+TEST_F(NotificationViewTest, SwipeTracksTheHistoryCardAndMiddleClickDismissesItsCollapsedGroup)
+{
+    addHistory("org.example.Mail", "Mail", "Keep this");
+    addHistory("org.example.Chat", "Chat", "Older");
+    addHistory("org.example.Chat", "Chat", "Newer");
+    addHistory("org.example.Game", "Game", "Swipe this");
+    centre().open(menuBar.get(), base::Point(1440 - 120, kMenuBar));
+    frames(300);
+    ASSERT_EQ(4u, centre().rows().size());
+    auto *row = centre().rows().front();
+    const auto origin = centre().geometry().topLeft();
+    const auto target = centreOf(row->card(), origin);
+    move(target.x(), target.y());
+    const double x = row->card()->mapToWindow({0, 0}).x;
+    const auto stamp = [this] { return input::Timestamp(std::chrono::milliseconds(++ms)); };
+    const auto begin = [&] { input.onPointerGestureBegin(stamp(), input::GestureType::Swipe, 3); };
+    const auto slideLeft = [&] { input.onPointerGestureUpdate(stamp(), input::GestureType::Swipe, {-92, 2}, {-92, 2}, 1, 0); };
+    const auto end = [&](bool cancelled) { input.onPointerGestureEnd(stamp(), input::GestureType::Swipe, cancelled); };
+    begin();
+    slideLeft();
+    EXPECT_DOUBLE_EQ(x - 92, row->card()->mapToWindow({0, 0}).x);
+    end(true);
+    frames(210);
+    EXPECT_DOUBLE_EQ(x, row->card()->mapToWindow({0, 0}).x);
+    EXPECT_FALSE(row->dismissing);
+    begin();
+    slideLeft();
+    end(false);
+    EXPECT_TRUE(row->dismissing);
+    frames(720);
+    ASSERT_EQ(3u, centre().rows().size());
+    auto *group = centre().rows().front();
+    ASSERT_TRUE(group->isStacked());
+    const auto stack = centreOf(group->card(), origin);
+    click(stack.x(), stack.y(), BTN_MIDDLE);
+    EXPECT_TRUE(group->dismissing);
+    frames(720);
+    ASSERT_EQ(1, notifications->history().count());
+    EXPECT_EQ("Keep this", notifications->history().notifications().front().summary);
 }
 
 TEST_F(NotificationViewTest, TheCentreStacksEachApplicationAndFansItOut)

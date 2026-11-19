@@ -216,6 +216,7 @@ public:
     bool isDetailed() const;
     void moveTo(double y, bool animate);
     void arrive();
+    void resetSwipe();
     // Whether any of the card shows between `top` and `bottom` of the list,
     // as drawn now or once it is at `y` as its state says.
     bool isSeenWithin(double top, double bottom, double y) const;
@@ -239,11 +240,13 @@ private:
     Tween m_y;
     Tween m_contentY;
     Tween m_horizontal;
+    Tween m_swipe;
     Tween m_opacity;
     Tween m_scale;
     Tween m_frameHeight;
     std::unique_ptr<Tween> m_peeks[2];
     bool m_bottomOrigin = true;
+    int m_swipeDirection = 0;
     base::Timer m_goneTimer;
 };
 
