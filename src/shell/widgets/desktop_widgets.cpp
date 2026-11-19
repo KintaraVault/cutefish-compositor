@@ -977,30 +977,9 @@ protected:
         painter.clip(clip);
         if (kinds.empty())
             text(painter, clip, tr("No Widgets Found"), 16, ink(.78), true, true);
-        if (featured() && m_showHelp) {
-            const auto hero = heroRect();
-            painter.fillRoundedRect(hero, 10, ink(.11));
-            text(painter, {hero.x + 28, hero.y + 26, hero.width * .54, 30}, tr("Widgets on Desktop"), 15, palette.ink, true);
-            paragraph(painter, {hero.x + 28, hero.y + 63, hero.width * .48, 78},
-                      tr("Place widgets directly on the desktop by dragging them from the widget gallery."), 12, palette.muted);
-            const ui::RectF picture {hero.x + hero.width * .57, hero.y + 16, hero.width * .39, 119};
-            painter.fillRoundedRect(picture, 8, palette.raised.withAlpha(.58));
-            const double unit = (picture.width - 25) / 4;
-            for (int i = 0; i < 4; ++i)
-                painter.fillRoundedRect({picture.x + 8 + i * unit, picture.y + 8, unit * .55, 3}, 1.5, ink(.33));
-            const double card = std::min(35., unit);
-            painter.fillRoundedRect({picture.x + 13, picture.y + 24, card, card}, 8, ink(.30));
-            painter.fillRoundedRect({picture.x + card + 20, picture.y + 24, card * 2 + 6, card}, 8, ink(.23));
-            painter.fillRoundedRect({picture.x + card * .6, picture.y + 64, picture.width * .77, 47}, 7, palette.surface.withAlpha(.91));
-            for (int i = 0; i < 3; ++i)
-                painter.fillRoundedRect({picture.x + card * .6 + 9 + i * unit, picture.y + 73, unit - 4, 25}, 5, ink(.19));
-            const auto close = heroClose();
-            painter.fillRoundedRect(close, 9, palette.raised.withAlpha(.82));
-            text(painter, close, "×", 11, palette.ink, true, true);
-            text(painter, {clip.x + 10, hero.bottom() + 5, clip.width - 20, 24}, tr("Suggestions"), 11, palette.ink, true);
-        } else if (featured()) {
-            text(painter, {clip.x + 10, heroRect().bottom() + 5, clip.width - 20, 24}, tr("Suggestions"), 11, palette.ink, true);
-        }
+        if (featured())
+            text(painter, {clip.x + 10, clip.y + 8 - m_scroll, clip.width - 20, 24},
+                 tr("Suggestions"), 11, palette.ink, true);
         for (const auto &pick : previews()) {
             const auto rect = pick.rect;
             if (!ui::toBase(clip).intersects(ui::toBase(rect)))
@@ -1060,9 +1039,6 @@ protected:
                 m_owner.add(m_held->kind, m_held->size);
             else if (m_drag && !contains(localRect(), p))
                 m_owner.add(m_held->kind, m_held->size, dragBounds(p).topLeft(), global(p));
-        } else if (featured() && m_showHelp && contains(heroClose(), m_origin) && contains(heroClose(), p)) {
-            m_showHelp = false;
-            m_scroll = 0;
         } else if (contains(sidebarClip(), p) && contains(sidebarClip(), m_origin)) {
             const auto kinds = filtered();
             for (size_t i = 0; i <= kinds.size(); ++i)
@@ -1213,12 +1189,6 @@ private:
     ui::RectF doneRect() const { return {geometry().width - 116, geometry().height - 45, 96, 30}; }
     ui::RectF kindRect(int kind) const { return {14, 64. + 42 * kind - m_sidebarScroll, sidebar() - 28, 40}; }
     ui::RectF sidebarClip() const { return {0, 63, sidebar(), std::max(0., geometry().height - 125)}; }
-    ui::RectF heroRect() const
-    {
-        const auto clip = previewClip();
-        return {clip.x + 3, 19 - m_scroll, clip.width - 6, m_showHelp ? 169. : 0.};
-    }
-    ui::RectF heroClose() const { const auto hero = heroRect(); return {hero.x - 4, hero.y - 3, 19, 19}; }
     ui::RectF previewClip() const
     {
         const double top = featured() ? 16 : 61;
@@ -1239,7 +1209,7 @@ private:
             constexpr double gap = 10;
             const double unit = (clip.width - 20 - 5 * gap) / 6;
             const double step = unit + gap;
-            const double top = heroRect().bottom() + 38;
+            const double top = clip.y + 41 - m_scroll;
             const auto add = [&](Kind kind, Size size, int col, int row, int columns, int rows) {
                 result.push_back({kind, size, {clip.x + 10 + col * step, top + row * step,
                                               columns * step - gap, rows * step - gap}});
@@ -1319,7 +1289,6 @@ private:
     ui::SearchField *m_search;
     Kind m_kind = Kind::Clock;
     bool m_all = true;
-    bool m_showHelp = true;
     bool m_closing = false;
     double m_scroll = 0;
     double m_sidebarScroll = 0;

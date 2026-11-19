@@ -640,7 +640,6 @@ private:
         const auto r = v.catalogRect();
         const auto palette = editor_palette::forTheme(panel::dark());
         const auto ink = palette.ink;
-        const auto soft = palette.muted;
         if (painter) {
             painter->save();
             painter->multiplyOpacity(v.m_catalogReveal);
@@ -776,43 +775,6 @@ private:
         } else if (!category.empty()) {
             section(category.c_str(), matching([&](const auto &def) { return category == def.category; }));
         } else {
-            const bool artwork = width >= 370;
-            const double height = artwork ? 221 : 99;
-            if (painter) {
-                const double copyWidth = artwork ? width * .52 - 32 : width - 32;
-                painter->fillRoundedRect({left, y, width, height}, 8, ink.withAlpha(.09));
-                text(*painter, {left + 26, y + (artwork ? 36 : 10), copyWidth, 30}, tr("What’s New"), 15, ink, true);
-                const double introY = y + (artwork ? 67 : 42);
-                paragraph(*painter, {left + 26, introY, copyWidth, height - (introY - y) - 6},
-                          tr("Control Center is more flexible than ever. Resize and move controls to keep the ones that matter within reach. You can also add your favorite controls to the menu bar."), 11, soft);
-            }
-            if (painter && artwork) {
-                const ui::RectF screen {left + width * .52, y + 17, width * .48 - 16, height - 34};
-                painter->fillRoundedRect(screen, 8, ui::LinearGradient::vertical(screen,
-                        palette.raised.withAlpha(.58), palette.accent.withAlpha(.19)));
-                painter->fillRoundedRect({screen.x + 3, screen.y + 3, screen.width - 6, 8}, 3, panel::textColor(.17));
-                const double tile = std::min((screen.width - 22) / 11, 13.0);
-                const double x = screen.right() - tile * 4 - 12;
-                const double top = screen.y + 16;
-                const ui::RectF gallery {screen.x + 10, top + 14, x - screen.x - 16, screen.height - 41};
-                painter->fillRoundedRect(gallery, 5, panel::textColor(.17));
-                painter->fillRect({gallery.x + gallery.width * .29, gallery.y, 1, gallery.height}, panel::textColor(.20));
-                for (int row = 0; row < 6; ++row) {
-                    painter->fillRoundedRect({gallery.x + 4, gallery.y + 6 + row * 9., gallery.width * .20, 3}, 1.5,
-                                            panel::textColor(.24));
-                    for (int col = 0; col < 4; ++col) {
-                        const double unit = gallery.width * .15;
-                        painter->fillRoundedRect({gallery.x + gallery.width * .34 + col * unit,
-                                                 gallery.y + 6 + row * 9., unit - 3, 6}, 3, panel::textColor(.26));
-                    }
-                }
-                for (int row = 0; row < 7; ++row) {
-                    const int wide = row == 3 || row == 4 ? 4 : row < 2 ? 2 : 1;
-                    for (int col = 0; col < 4; col += wide)
-                        painter->fillRoundedRect({x + col * tile, top + row * 14., wide * tile - 3, 11}, 5, panel::textColor(.29));
-                }
-            }
-            y += height + 13;
             if (columns == 6) {
                 title(tr("Recommendations"), 11);
                 const double top = y + 14;
