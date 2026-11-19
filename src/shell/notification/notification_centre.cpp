@@ -12,9 +12,9 @@
 #include "core/main_loop.h"
 #include "shell/notification/notification_card.h"
 #include "shell/notification/notification_controls.h"
+#include "shell/notification/notification_glass.h"
 #include "shell/notification/notification_models.h"
 #include "shell/shell.h"
-#include "shell/shell_data.h"
 #include "shell/shell_host.h"
 #include "shell/shell_window.h"
 #include "shell/widgets/desktop_widgets.h"
@@ -34,13 +34,6 @@ using cutefish::i18n::trn;
 
 namespace cutefish::shell {
 
-// PanelStyle.tileColor: the cards' plates.
-static ui::Color cardColor()
-{
-    return ui::Theme::current().darkMode ? ui::Color::rgb(0x202023).withAlpha(.52)
-                                         : ui::Color::rgb(0xffffff).withAlpha(.46);
-}
-
 // PanelStyle.tileInkColor: what the cards read as, opaque, for their ink.
 static ui::Color cardInkColor()
 {
@@ -50,6 +43,11 @@ static ui::Color cardInkColor()
 static double smallSpacing()
 {
     return ui::Theme::current().smallSpacing;
+}
+
+static constexpr double peekAlpha(int layer)
+{
+    return 1 - (layer + 1) * 0.19;
 }
 
 // On whole device pixels while gliding, so text lands on the same subpixel
@@ -71,42 +69,6 @@ static std::string moreText(int count)
 // ---------------------------------------------------------------------------
 // Row
 
-// The row's sliding part: the peeking strips of a stack and the card's frame.
-class NotificationCentre::Row::Content : public ui::View
-{
-public:
-    explicit Content(Row *row)
-        : m_row(row)
-    {
-    }
-
-protected:
-    void paint(ui::Painter &painter) override
-    {
-        // Only the strip below the card is drawn, so the translucent plates
-        // never overlap one another.
-        const double width = geometry().width;
-        const double frame = m_row->frameHeight();
-        const ui::RoundedShape shape {kRadius, 0, ui::themeCorners()};
-        for (int index = 0; index < 2; ++index) {
-            const double opacity = m_row->peekOpacity(index);
-            if (opacity <= 0)
-                continue;
-            const int level = index + 1;
-            const double x = level * ui::Theme::current().largeSpacing;
-            const ui::RectF strip {x, frame + index * kPeekStep, width - x * 2, kPeekStep};
-            painter.save();
-            painter.multiplyOpacity(opacity);
-            painter.clip(strip);
-            painter.drawRoundedRect({strip.x, strip.bottom() - frame, strip.width, frame}, shape, cardColor());
-            painter.restore();
-        }
-    }
-
-private:
-    Row *m_row;
-};
-
 // The card's plate, its contents clipped to its own rect.
 class CardFrame : public ui::View
 {
@@ -118,18 +80,19 @@ NotificationCentre::Row::Row(NotificationCentre *centre, ui::Window *window)
     : m_centre(centre)
     , m_y(window)
     , m_contentY(window)
+    , m_horizontal(window, std::chrono::milliseconds(260), outCubic)
     , m_opacity(window)
     , m_scale(window)
     , m_frameHeight(window)
     , m_goneTimer(core::mainLoop())
 {
-    m_content = addChild<Content>(this);
+    m_content = addChild<ui::View>();
     m_frame = m_content->addChild<CardFrame>();
     m_card = m_frame->addChild<NotificationCard>(window, NotificationCard::Layout::History);
     m_card->setSurfaceColor(cardInkColor());
     for (auto &peek : m_peeks) {
         peek = std::make_unique<Tween>(window);
-        peek->onChanged = [this] { m_content->requestPaint(); };
+        peek->onChanged = [this] { m_centre->updateGlass(); };
         peek->snap(0);
     }
     m_opacity.snap(1);
@@ -137,6 +100,7 @@ NotificationCentre::Row::Row(NotificationCentre *centre, ui::Window *window)
 
     m_y.onChanged = [this] { place(); };
     m_contentY.onChanged = [this] { placeContent(); };
+    m_horizontal.onChanged = [this] { placeContent(); };
     m_opacity.onChanged = [this] { placeContent(); };
     m_scale.onChanged = [this] { placeContent(); };
     m_frameHeight.onChanged = [this] { placeContent(); };
@@ -213,6 +177,14 @@ void NotificationCentre::Row::moveTo(double y, bool animate)
     place();
 }
 
+void NotificationCentre::Row::arrive()
+{
+    m_frameHeight.snap(m_card->implicitHeight(kCardWidth));
+    m_horizontal.snap(26);
+    m_scale.snap(.96);
+    m_opacity.snap(0);
+}
+
 bool NotificationCentre::Row::isSeenWithin(double top, double bottom, double y) const
 {
     const double height = contentHeight();
@@ -229,16 +201,17 @@ void NotificationCentre::Row::apply(bool animated)
     const std::chrono::milliseconds fade = dismissing ? kDismissFade : kMotionDuration;
     m_opacity.setDuration(fade);
     m_scale.setDuration(fade);
+    m_horizontal.setDuration(dismissing ? kDismissFade : std::chrono::milliseconds(260));
     // Hidden, the content sits just above the row, behind the card before
     // it, so showing it slides it down out of the stack.
     m_contentY.setTarget(shown || dismissing ? 0 : -contentHeight(), animated);
+    m_horizontal.setTarget(dismissing ? 22 : 0, animated);
     m_opacity.setTarget(shown ? 1 : 0, animated);
     m_scale.setTarget(shown ? 1 : dismissing ? 0.92 : 0.94, animated);
     m_bottomOrigin = !dismissing;
 
     for (int index = 0; index < 2; ++index) {
-        const int level = index + 1;
-        m_peeks[index]->setTarget(index < peekCount() ? 1 - level * 0.3 : 0, animated);
+        m_peeks[index]->setTarget(index < peekCount() ? peekAlpha(index) : 0, animated);
     }
     m_frameHeight.setTarget(m_card->implicitHeight(kCardWidth), animated);
     m_card->setConfirmClose(isStacked());
@@ -267,7 +240,7 @@ void NotificationCentre::Row::placeContent()
 {
     const double width = kCardWidth;
     const double height = m_card->implicitHeight(width) + peekCount() * kPeekStep;
-    m_content->setGeometry({kInset, pixelAligned(m_contentY), width, height});
+    m_content->setGeometry({kInset + pixelAligned(m_horizontal), pixelAligned(m_contentY), width, height});
     m_content->setOpacity(m_opacity.value());
     const double scale = m_scale.value();
     ui::Transform transform;
@@ -285,7 +258,7 @@ void NotificationCentre::Row::placeContent()
 }
 
 static void appendLens(render::GlassParams &glass, ui::Path &mask, ui::RectF body, double radius,
-                       std::optional<ui::RectF> clip = {}, double opacity = 1)
+                       render::GlassFinish finish, std::optional<ui::RectF> clip = {}, double opacity = 1)
 {
     if (body.width <= 0 || body.height <= 0 || opacity <= 0 || (clip && !ui::toBase(body).intersects(ui::toBase(*clip))))
         return;
@@ -301,15 +274,31 @@ static void appendLens(render::GlassParams &glass, ui::Path &mask, ui::RectF bod
         return;
     mask.addPath(piece);
     glass.lenses.push_back({ui::toBase(body), radius, -1, float(opacity),
-                            clip ? std::optional(ui::toBase(*clip)) : std::nullopt});
+                            clip ? std::optional(ui::toBase(*clip)) : std::nullopt, finish});
 }
 
 void NotificationCentre::Row::appendGlass(render::GlassParams &glass, ui::Path &mask, ui::RectF viewport) const
 {
     const double scale = m_scale.value();
-    auto origin = m_frame->mapToWindow({0, 0});
-    appendLens(glass, mask, {origin.x, origin.y, kCardWidth * scale, frameHeight() * scale},
-               kRadius * scale, viewport, contentOpacity());
+    const auto origin = m_frame->mapToWindow({0, 0});
+    const auto finish = notificationFinish(ui::Theme::current().darkMode);
+    const double frame = frameHeight() * scale;
+    const double width = kCardWidth * scale;
+    const double radius = kRadius * scale;
+    double edge = origin.y + frame;
+    for (int index = 0; index < 2; ++index) {
+        const double opacity = peekOpacity(index);
+        const double step = kPeekStep * scale * opacity / peekAlpha(index);
+        const double inset = (index + 1) * ui::Theme::current().largeSpacing * scale;
+        const double bottom = edge + step;
+        const double top = std::max(viewport.y, edge);
+        const double end = std::min(viewport.bottom(), bottom);
+        if (opacity > 0 && end > top)
+            appendLens(glass, mask, {origin.x + inset, bottom - frame, width - 2 * inset, frame}, radius,
+                       finish, ui::RectF {viewport.x, top, viewport.width, end - top}, contentOpacity() * opacity);
+        edge = bottom;
+    }
+    appendLens(glass, mask, {origin.x, origin.y, width, frame}, radius, finish, viewport, contentOpacity());
 }
 
 // ---------------------------------------------------------------------------
@@ -834,12 +823,7 @@ void NotificationCentre::applyGlass()
     if (!window)
         return;
     const bool dark = ui::Theme::current().darkMode;
-    auto glass = dark ? popupGlass(.10, .10, .10, .57) : popupGlass(1, 1, 1, .55);
-    glass.blurSigma = 12;
-    glass.displacement = 8;
-    glass.chroma = 0;
-    glass.rim = .66f;
-    glass.backdropReflection = .8f;
+    auto glass = notificationGlass();
     ui::Path mask;
     const auto viewport = m_scroll->geometry();
     for (auto row = m_rows.rbegin(); row != m_rows.rend(); ++row)
@@ -850,7 +834,8 @@ void NotificationCentre::applyGlass()
         const auto at = button->mapToWindow({0, 0});
         if (button->isVisible())
             appendLens(glass, mask, {at.x, at.y, button->geometry().width, button->geometry().height},
-                       button->geometry().height / 2, button == m_clearAll ? std::optional(viewport) : std::nullopt);
+                       button->geometry().height / 2, notificationFinish(dark),
+                       button == m_clearAll ? std::optional(viewport) : std::nullopt);
     }
     window->setBackgroundBlur(mask.isEmpty() ? base::Rect() : base::Rect({}, m_geometry.size()), int(kRadius), glass, mask);
 }
@@ -883,8 +868,16 @@ void NotificationCentre::insertRows(int first, int count)
 {
     if (!m_window)
         return;
-    for (int index = first; index < first + count; ++index)
-        m_rows.insert(m_rows.begin() + index, makeRow(index));
+    if (m_open)
+        beginMotion();
+    for (int index = first; index < first + count; ++index) {
+        auto *row = makeRow(index);
+        if (m_open) {
+            row->placed = true;
+            row->arrive();
+        }
+        m_rows.insert(m_rows.begin() + index, row);
+    }
     scheduleLayout();
 }
 

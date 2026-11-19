@@ -680,7 +680,9 @@ void BackdropFilter::draw(Renderer &renderer, const base::RectF &exactLens, int 
             glUniform1f(program.uniform("uOpticalProfile"), finish == GlassFinish::ControlTile ? 3.f
                         : finish == GlassFinish::WidgetDark ? 2.f
                         : finish == GlassFinish::WidgetLight ? 1.f : 0.f);
-            glUniform1f(program.uniform("uFrosted"), finish == GlassFinish::GalleryDark ? -2.f
+            glUniform1f(program.uniform("uFrosted"), finish == GlassFinish::NotificationDark ? -3.f
+                        : finish == GlassFinish::NotificationLight ? 3.f
+                        : finish == GlassFinish::GalleryDark ? -2.f
                         : finish == GlassFinish::GalleryLight ? 2.f
                         : finish == GlassFinish::FrostedDark ? -1.f
                         : finish == GlassFinish::FrostedLight ? 1.f : 0.f);

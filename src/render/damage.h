@@ -63,6 +63,10 @@ inline BackdropReach backdropReach(const GlassParams &glass, double scale)
         for (const auto &lens : glass.lenses) {
             if (lens.finish == GlassFinish::Lens)
                 continue;
+            if (lens.finish == GlassFinish::NotificationLight || lens.finish == GlassFinish::NotificationDark) {
+                reach = std::max(reach, kNotificationGlassReach + glass.displacement / 0.45);
+                continue;
+            }
             if (usesSceneDetail(lens.finish)) {
                 reach = std::max(reach, lens.finish == GlassFinish::ControlTile ? 41.0 : 6.0);
                 continue;

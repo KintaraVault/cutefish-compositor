@@ -80,6 +80,7 @@ public:
         std::unique_ptr<ShellWindow> m_window;
         NotificationCard *m_card = nullptr;
         std::unique_ptr<Tween> m_stackY;
+        std::unique_ptr<Tween> m_reveal;
         base::Point m_stack;
         bool m_placed = false;
         bool m_shown = false;

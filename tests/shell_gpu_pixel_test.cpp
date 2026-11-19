@@ -237,7 +237,14 @@ TEST_P(ShellGpuPixels, FrostedSheetDiffusesTheSceneWithoutChangingNearbyLenses)
     const auto dark = draw();
     material.lenses.front().finish = GlassFinish::GalleryLight;
     const auto gallery = draw();
+    material.lenses.front().finish = GlassFinish::NotificationLight;
+    const auto notification = draw();
+    material.lenses.front().finish = GlassFinish::NotificationDark;
+    const auto darkNotification = draw();
     background->setColor(false);
+    material.lenses.front().finish = GlassFinish::NotificationLight;
+    const auto grayNotification = draw();
+    material.lenses.front().finish = GlassFinish::GalleryLight;
     const auto grayGallery = draw();
     material.lenses.front().finish = GlassFinish::FrostedLight;
     const auto grayLight = draw();
@@ -267,6 +274,15 @@ TEST_P(ShellGpuPixels, FrostedSheetDiffusesTheSceneWithoutChangingNearbyLenses)
     EXPECT_GT(delta(light), 0); // the bright scene still contributes to the material
     EXPECT_LT(delta(light) * 2, delta(standard));
     EXPECT_LT(delta(dark) * 2, delta(standard));
+    const auto notice = pixelAt(grayNotification, {66, 66});
+    EXPECT_EQ(gray(notice), int((notice >> 8) & 255));
+    EXPECT_EQ(gray(notice), int((notice >> 16) & 255));
+    EXPECT_GT(gray(notice), gray(pixelAt(darkNotification, {66, 66})) + 80);
+    EXPECT_GT(gray(pixelAt(grayNotification, {90, 14})), gray(notice)); // rolled rim
+    const auto blueNotice = pixelAt(notification, {263, 64});
+    EXPECT_GT(gray(blueNotice), int((blueNotice >> 16) & 255) + 25);
+    EXPECT_EQ(0xff272727u, pixelAt(notification, {20, 14}));
+    EXPECT_EQ(pixelAt(standard, {344, 56}), pixelAt(notification, {344, 56}));
 }
 
 TEST_P(ShellGpuPixels, SfumatoWidgetAndControlProfilesUseSeparateSceneTransfers)

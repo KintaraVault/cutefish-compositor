@@ -6,6 +6,7 @@
 // draws them: windows, places, glass, timeouts, clicks, stacking and the
 // centre's groups, headless on a fake renderer and a private session bus.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 
@@ -260,7 +261,11 @@ TEST_F(NotificationViewTest, ABannerShowsTopRightOnGlassAndTimesOut)
     EXPECT_TRUE(surface->glass().enabled);
     EXPECT_EQ(18, surface->backgroundBlurRadius());
     EXPECT_EQ(base::Rect(0, 0, 380, window->bounds().height()), surface->backgroundBlurRect());
-    EXPECT_NEAR(0.6, surface->glass().tintAlpha, 1.0 / 256);
+    ASSERT_EQ(1u, surface->glass().lenses.size());
+    EXPECT_EQ(render::GlassFinish::NotificationLight, surface->glass().lenses.front().finish);
+    EXPECT_GT(window->presentationOffset().x(), 0);
+    frames(280);
+    EXPECT_EQ(base::Point(), window->presentationOffset());
 
     // Seven seconds by default.
     EXPECT_EQ(std::chrono::milliseconds(7000), banner->timeout());
@@ -367,6 +372,7 @@ TEST_F(NotificationViewTest, ClicksInvokeAndClose)
     EXPECT_EQ(0, notifications->history().count());
 
     const uint32_t withActions = notify("Actions", "Body", {"ok", "OK", "later", "Later"});
+    frames(280);
     banner = popups().banners().back().get();
     const auto rects = banner->card()->actionRects();
     ASSERT_EQ(2u, rects.size());
@@ -391,6 +397,7 @@ TEST_F(NotificationViewTest, ClicksInvokeAndClose)
 
     // The close button, there under the pointer.
     const uint32_t closable = notify("Close me");
+    frames(280);
     banner = popups().banners().back().get();
     const base::Point at = banner->window()->geometry().topLeft();
     move(at.x() + 200, at.y() + 40);
@@ -435,10 +442,11 @@ TEST_F(NotificationViewTest, TheCentreOpensUnderTheBarAndTakesTheBanners)
     EXPECT_TRUE(window->isPopup());
     EXPECT_EQ(centre().geometry(), window->wmWindow()->bounds());
     EXPECT_TRUE(window->surface()->glass().enabled);
-    EXPECT_FLOAT_EQ(shell::glassFixed(12.0), window->surface()->glass().blurSigma);
+    EXPECT_FLOAT_EQ(shell::glassFixed(11.0), window->surface()->glass().blurSigma);
     EXPECT_EQ(22, window->surface()->backgroundBlurRadius());
     EXPECT_FALSE(window->surface()->backgroundBlurShape().isEmpty());
     EXPECT_GE(window->surface()->glass().lenses.size(), 2u);
+    EXPECT_EQ(render::GlassFinish::NotificationLight, window->surface()->glass().lenses.front().finish);
     EXPECT_GT(window->wmWindow()->presentationOffset().x(), 0);
     frames(300);
     EXPECT_EQ(base::Point(), window->wmWindow()->presentationOffset());
@@ -454,6 +462,9 @@ TEST_F(NotificationViewTest, TheCentreOpensUnderTheBarAndTakesTheBanners)
     EXPECT_EQ(2, notifications->history().count());
     frames();
     EXPECT_EQ(2u, centre().rows().size());
+    EXPECT_LT(centre().rows().front()->contentOpacity(), 1);
+    frames(410);
+    EXPECT_DOUBLE_EQ(1, centre().rows().front()->contentOpacity());
 
     // The column stays right-aligned even if the bar item is further left.
     centre().close();
@@ -502,6 +513,13 @@ TEST_F(NotificationViewTest, TheCentreStacksEachApplicationAndFansItOut)
     EXPECT_DOUBLE_EQ(card + 16 + 9, rows[3]->targetY());
     EXPECT_EQ(4, centre().liveCount());
     EXPECT_TRUE(centre().clearAllButton()->isVisible());
+    const auto peekLenses = [&] {
+        return std::ranges::count_if(centre().shellWindow()->surface()->glass().lenses, [](const auto &lens) {
+            return lens.viewport && lens.viewport->height() <= shell::NotificationCentre::kPeekStep
+                    && lens.finish == render::GlassFinish::NotificationLight;
+        });
+    };
+    EXPECT_EQ(2, peekLenses());
 
     // A click on the stack fans it out under a header.
     const base::Point origin = centre().geometry().topLeft();
@@ -517,12 +535,14 @@ TEST_F(NotificationViewTest, TheCentreStacksEachApplicationAndFansItOut)
     frames(450);
     EXPECT_DOUBLE_EQ(35, rows[0]->geometry().y);
     EXPECT_DOUBLE_EQ(1, rows[1]->contentOpacity());
+    EXPECT_EQ(0, peekLenses());
 
     // "Show Less" folds it back.
     click(centreOf(header->showLessButton(), origin).x(), centreOf(header->showLessButton(), origin).y());
     EXPECT_FALSE(centre().isExpanded("org.example.Chat"));
     EXPECT_TRUE(rows[0]->isStacked());
     frames(450);
+    EXPECT_EQ(2, peekLenses());
 
     // A click on a single card shows its whole body.
     click(centreOf(rows[3]->card(), origin).x(), centreOf(rows[3]->card(), origin).y());

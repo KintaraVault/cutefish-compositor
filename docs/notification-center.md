@@ -28,6 +28,11 @@ desktop position and settings, and read positions saved by earlier versions.
 
 The notification cards and widget gallery reuse the compositor's native glass
 and clip its optics to each surface. The glass does not set a wallpaper hue.
+History cards and live banners use a dedicated satin profile: a diffuse local
+backdrop, a refracting lip and a thin highlight derived from incident light.
+The exposed layers of grouped cards use the same profile and move with the
+card. New notifications slide and fade in; dismissals move out before the list
+closes their gap.
 The layout is based on the supplied Tahoe crops. Motion approximates the visible
 transitions; the crops don't establish the original timings and easing curves.
 The gallery shows the providers available in this fork, not a simulated Apple

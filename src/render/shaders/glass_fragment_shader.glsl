@@ -36,7 +36,7 @@ uniform float uOpticalProfile;
 uniform sampler2D uSceneDetail;
 
 float roundRect(vec2 p, vec2 halfSize, float r) {
-    if (uBackdropReflection > 0.0 || uOpticalProfile > 0.0) {
+    if (uBackdropReflection > 0.0 || uOpticalProfile > 0.0 || abs(uFrosted) > 2.5) {
         // Match the actual circular arcs of the shell's path mask, so the
         // optical lip doesn't disappear into, or detach from, the corners.
         vec2 q = abs(p) - halfSize + r;
@@ -60,7 +60,7 @@ vec2 outwardAt(vec2 p, vec2 halfSize, float r) {
     vec2 q = edge + radius;
     if (min(radius.x, radius.y) <= 0.0 || min(q.x, q.y) <= 0.0)
         return edge.x > edge.y ? vec2(sign(p.x), 0.0) : vec2(0.0, sign(p.y));
-    if (uBackdropReflection > 0.0 || uOpticalProfile > 0.0)
+    if (uBackdropReflection > 0.0 || uOpticalProfile > 0.0 || abs(uFrosted) > 2.5)
         return sign(p) * normalize(q);
     return sign(p) * cornerNormal(q / radius, radius);
 }
@@ -329,6 +329,29 @@ vec3 frostedSheet(vec2 p, vec2 halfSize, float r, float band, float sd, vec2 uv,
     return color;
 }
 
+// A small satin plate, not the gallery's regional wash. The soft body retains
+// local scene color. At the rolled lip, nearby incident light gives it a thin
+// bright top edge and a softer bottom edge even on gray wallpaper.
+vec3 notificationGlass(vec2 p, vec2 halfSize, float r, float band, float sd, vec2 uv, vec2 margin, vec2 n) {
+    vec2 sampleUv = clamp(uv + lensOffset(p, halfSize, r, band) / uCoverage, margin, 1.0 - margin);
+    vec3 scene = backdrop(sampleUv);
+    float y = luminance(scene);
+    bool dark = uFrosted < 0.0;
+    float tone = dark ? 0.15 + 0.16 * y : 0.62 + 0.24 * y;
+    vec3 chroma = (scene - vec3(y)) * (dark ? 0.31 : 0.48);
+    vec3 color = clamp(vec3(tone) + chroma, 0.0, 1.0);
+    float logical = -sd / uRim.y;
+    if (logical < 5.0) {
+        vec3 incident = backdrop(clamp(sampleUv + n * 8.0 * uRim.y / uCoverage, margin, 1.0 - margin));
+        float crest = 1.0 - smoothstep(0.16, 1.55, logical);
+        float shoulder = smoothstep(0.35, 1.50, logical) * (1.0 - smoothstep(1.50, 5.0, logical));
+        float upper = 0.5 - 0.5 * n.y;
+        color += shoulder * (incident - scene) * 0.25;
+        color = mix(color, vec3(1.0), crest * mix(0.12, 0.30, upper) * (0.68 + 0.32 * luminance(incident)));
+    }
+    return clamp(color, 0.0, 1.0);
+}
+
 void shade() {
     vec2 halfSize = uLens.zw * 0.5;
     vec2 p = vTexCoord * uSize - uLens.xy - halfSize;
@@ -358,6 +381,17 @@ void shade() {
     // The roll-off band is bounded so the glass cannot keep curving towards the
     // middle of a large surface.
     float band = clamp(uBevel > 0.0 ? uBevel : r, 1.0, min(halfSize.x, halfSize.y));
+
+    if (abs(uFrosted) > 2.5) {
+        vec2 n = outwardAt(p, halfSize, r);
+        float mask = mix(1.0, texture2D(uShape, uShapeRect.xy + vTexCoord * uShapeRect.zw).a, uHasShape);
+        if (uNestedLens > 0.0) {
+            float footprint = 0.5 * max(1.0, abs(n.x) + abs(n.y));
+            mask = min(mask, 1.0 - smoothstep(-footprint, footprint, sd));
+        }
+        gl_FragColor = vec4(notificationGlass(p, halfSize, r, band, sd, uv, margin, n), 1.0) * mask * uOpacity;
+        return;
+    }
 
     if (abs(uFrosted) > 0.5) {
         float mask = mix(1.0, texture2D(uShape, uShapeRect.xy + vTexCoord * uShapeRect.zw).a, uHasShape);

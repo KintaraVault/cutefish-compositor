@@ -16,8 +16,12 @@ namespace cutefish::render {
 
 enum class GlassFinish {
     Lens, FrostedLight, FrostedDark, GalleryLight, GalleryDark,
-    WidgetLight, WidgetDark, ControlTile,
+    WidgetLight, WidgetDark, ControlTile, NotificationLight, NotificationDark,
 };
+
+// Maximum distance of the extra edge tap, in logical pixels. Keep this in
+// step with notificationGlass() in glass_fragment_shader.glsl.
+inline constexpr double kNotificationGlassReach = 8.0;
 
 inline bool usesSceneDetail(GlassFinish finish)
 {

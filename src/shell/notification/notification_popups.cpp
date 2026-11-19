@@ -10,15 +10,17 @@
 #include "core/main_loop.h"
 #include "shell/notification/notification_card.h"
 #include "shell/notification/notification_controls.h"
+#include "shell/notification/notification_glass.h"
 #include "shell/notification/notification_models.h"
 #include "shell/notification/notification_motion.h"
 #include "shell/shell.h"
-#include "shell/shell_data.h"
 #include "shell/shell_window.h"
-#include "ui/embedded_window.h"
-#include "ui/theme.h"
-#include "wm/window_manager.h"
 #include "toolkit/compositor_colors.h"
+#include "ui/embedded_window.h"
+#include "ui/path.h"
+#include "ui/theme.h"
+#include "wm/window.h"
+#include "wm/window_manager.h"
 
 namespace cutefish::shell {
 
@@ -80,6 +82,14 @@ NotificationPopups::Banner::Banner(NotificationPopups *popups, const Notificatio
 
     m_stackY = std::make_unique<Tween>(window);
     m_stackY->onChanged = [this] { applyPosition(); };
+    m_reveal = std::make_unique<Tween>(window, std::chrono::milliseconds(240), outCubic);
+    m_reveal->onChanged = [this] {
+        if (auto *surface = m_window->wmWindow()) {
+            const double progress = m_reveal->value();
+            surface->setPresentationOffset({int(std::lround(30 * (1 - progress))), 0});
+            surface->setOpacity(float(progress));
+        }
+    };
 
     m_timer.setSingleShot(true);
     m_timer.onTimeout = [this] {
@@ -115,6 +125,7 @@ NotificationPopups::Banner::~Banner()
 {
     m_timer.stop();
     m_stackY.reset();
+    m_reveal.reset();
     m_window.reset();
 }
 
@@ -167,9 +178,13 @@ void NotificationPopups::Banner::updateTimer()
 
 void NotificationPopups::Banner::updateGlass()
 {
-    const bool dark = ui::Theme::current().darkMode;
-    m_window->setBackgroundBlur(base::Rect(0, 0, kWidth, m_height), int(kRadius),
-                                dark ? popupGlass(0.17, 0.17, 0.19, 0.6) : popupGlass(1, 1, 1, 0.6));
+    auto glass = notificationGlass();
+    const ui::RectF rect {0, 0, kWidth, double(m_height)};
+    ui::Path shape;
+    shape.addRoundedRect(rect, kRadius, kRadius);
+    glass.lenses.push_back({{0, 0, kWidth, double(m_height)}, kRadius, -1, 1, {},
+                            notificationFinish(ui::Theme::current().darkMode)});
+    m_window->setBackgroundBlur({0, 0, kWidth, m_height}, int(kRadius), glass, shape);
 }
 
 void NotificationPopups::Banner::place(const base::Point &position)
@@ -199,10 +214,15 @@ void NotificationPopups::Banner::setShown(bool shown)
     if (shown == m_shown)
         return;
     m_shown = shown;
-    if (shown)
+    if (shown) {
         m_window->show();
-    else
+        m_reveal->snap(0);
+        m_reveal->onChanged();
+        m_reveal->setTarget(1, true);
+    } else {
+        m_reveal->snap(1);
         m_window->hide();
+    }
     updateTimer();
 }
 
