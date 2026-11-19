@@ -178,15 +178,12 @@ public:
         setName("desktop-widget");
         setTracksHover(true);
         setLayered(true);
-        m_badge = addChild<RemoveBadge>();
-        m_badge->setGeometry({6, 6, 22, 22});
-        m_badge->setOpacity(0);
-        m_badge->setTransform({{}, .66});
     }
 
     Widget *widget() const { return &m_item; }
     bool leaving() const { return m_leaving; }
-    ui::RectF visualRect() const
+    // Glass is placed in window coordinates. View::visualRect() must remain local for layer damage and clipping.
+    ui::RectF lensBoundsInWindow() const
     {
         const auto at = mapToWindow({0, 0});
         const auto end = mapToWindow({geometry().width, geometry().height});
@@ -596,6 +593,14 @@ protected:
             return;
         artwork(painter, localRect(), m_item.kind, m_item.size, m_owner.m_controls.batteryCharge(),
                 m_owner.m_controls.onBattery(), &m_item);
+        // Repaint the artwork underneath the badge in the same layer, including its last fade frame.
+        if (m_badgeOpacity > 0) {
+            constexpr double centre = 17;
+            const double radius = 11 * m_badgeScale;
+            const auto fill = ui::Color::rgb(panel::dark() ? 0x4F4F55 : 0xDFDFE4);
+            sign(painter, {centre - radius, centre - radius, radius * 2, radius * 2}, false,
+                 fill.withAlpha(m_badgeOpacity), ink(m_badgeOpacity));
+        }
     }
 
     void pointerPress(const ui::PointerEvent &event) override
@@ -626,7 +631,7 @@ protected:
         if (event.button == ui::MouseButton::Left && (m_editing || m_item.kind == Kind::Reminders
                                                        || m_item.kind == Kind::Photos || m_item.kind == Kind::Weather)) {
             m_press = dragPoint(event.position);
-            m_remove = m_editing && m_badge->opacity() > .45
+            m_remove = m_editing && m_badgeOpacity > .45
                     && control_paint::contains(kBadgeHit, event.position);
             if (m_remove)
                 updateBadge();
@@ -682,16 +687,6 @@ protected:
 
 private:
     static constexpr ui::RectF kBadgeHit {4, 4, 26, 26};
-    class RemoveBadge final : public ui::View {
-    public:
-        RemoveBadge() { setName("remove-widget"); setLayered(true); }
-    protected:
-        void paint(ui::Painter &painter) override
-        {
-            sign(painter, localRect(), false,
-                 panel::dark() ? ui::Color::rgb(0x4F4F55) : ui::Color::rgb(0xDFDFE4), ink());
-        }
-    };
 
     void animate(std::unique_ptr<ui::Animation> &animation, std::chrono::milliseconds duration,
                  ui::Animation::Easing easing, std::function<void(double)> update)
@@ -713,12 +708,12 @@ private:
     {
         const double to = m_editing && !m_leaving ? 1 : 0;
         const double scaleTo = to ? (m_remove ? .83 : 1) : .66;
-        const double from = m_badge->opacity();
-        const double scaleFrom = m_badge->transform().scale;
-        m_badge->requestPaint();
+        const double from = m_badgeOpacity;
+        const double scaleFrom = m_badgeScale;
         animate(m_badgeMotion, to ? 190ms : 145ms, ui::Animation::Easing::OutCubic, [=, this](double t) {
-            m_badge->setOpacity(std::lerp(from, to, t));
-            m_badge->setTransform({{}, std::lerp(scaleFrom, scaleTo, t)});
+            m_badgeOpacity = std::lerp(from, to, t);
+            m_badgeScale = std::lerp(scaleFrom, scaleTo, t);
+            requestPaint(kBadgeHit);
         });
     }
 
@@ -771,7 +766,7 @@ public:
             if (auto *stack = static_cast<Stack *>(parent()); stack && stack->onPresentationChanged)
                 stack->onPresentationChanged();
         } else if (m_item.window) {
-            applyWidgetGlass(*m_item.window, m_item.window->geometry().size(), visualRect(), float(opacity()));
+            applyWidgetGlass(*m_item.window, m_item.window->geometry().size(), lensBoundsInWindow(), float(opacity()));
         }
     }
 
@@ -786,13 +781,13 @@ private:
     DesktopWidgets &m_owner;
     Widget &m_item;
     std::weak_ptr<bool> m_alive;
-    RemoveBadge *m_badge = nullptr;
     std::unique_ptr<ui::Animation> m_badgeMotion, m_lifecycle, m_slide, m_liftMotion;
     std::unique_ptr<ui::Menu> m_menu;
     std::optional<ui::PointF> m_press;
     ui::RectF m_slot;
     ui::PointF m_offset, m_dragOffset;
     double m_visibility = 1, m_lift = 0;
+    double m_badgeOpacity = 0, m_badgeScale = .66;
     bool m_editing = false, m_leaving = false;
     bool m_remove = false;
     bool m_floating = false;
@@ -862,7 +857,7 @@ void DesktopWidgets::Stack::appendGlass(render::GlassParams &glass, ui::Path &ma
     clipPath.addRect(viewport);
     for (const auto &child : children()) {
         const auto *cardView = static_cast<const Card *>(child.get());
-        const auto rect = cardView->visualRect();
+        const auto rect = cardView->lensBoundsInWindow();
         if (cardView->opacity() <= 0 || !clip.intersects(ui::toBase(rect)))
             continue;
         const double radius = std::min(rect.width, rect.height) * kRadius / kSize;

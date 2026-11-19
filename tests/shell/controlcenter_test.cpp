@@ -7,6 +7,7 @@
 // headless on a fake renderer with fake services.
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -1521,7 +1522,7 @@ TEST_F(ControlCenterTest, TheGalleryPlacesIndependentWidgetsInNotificationCenter
     frames(std::chrono::milliseconds(225));
 }
 
-TEST_F(ControlCenterTest, CentreWidgetsLiftReflowAndAnimateTheirRemoveBadges)
+TEST_F(ControlCenterTest, CentreWidgetsLiftReflowAndFadeWhenRemoved)
 {
     auto history = std::make_unique<shell::Notifications>(shell->bus(), shell->applications(), &shell->tasks(),
             shell::Notifications::Files {directory.filePath("widget-motion-notifications.conf"), directory.filePath("motion-history"),
@@ -1546,15 +1547,8 @@ TEST_F(ControlCenterTest, CentreWidgetsLiftReflowAndAnimateTheirRemoveBadges)
     ASSERT_EQ(3u, stack->children().size());
     auto *left = stack->children()[0].get();
     auto *right = stack->children()[1].get();
-    auto *badge = find(right, "remove-widget", find);
-    ASSERT_NE(nullptr, badge);
-    EXPECT_DOUBLE_EQ(0, badge->opacity());
     widgets.edit(true);
-    frames(std::chrono::milliseconds(65));
-    EXPECT_GT(badge->opacity(), 0);
-    EXPECT_LT(badge->opacity(), 1);
-    frames(std::chrono::milliseconds(320));
-    EXPECT_DOUBLE_EQ(1, badge->opacity());
+    frames(std::chrono::milliseconds(385));
     const auto global = [&](ui::View *view, ui::PointF at) {
         const auto p = view->mapToWindow(at);
         return p + ui::PointF{double(column.geometry().x()), double(column.geometry().y())};
@@ -1580,17 +1574,99 @@ TEST_F(ControlCenterTest, CentreWidgetsLiftReflowAndAnimateTheirRemoveBadges)
     ASSERT_EQ(3u, stack->children().size());
     EXPECT_LT(right->opacity(), 1);
     EXPECT_GT(right->opacity(), 0);
-    EXPECT_LT(badge->opacity(), 1);
     frames(std::chrono::milliseconds(250));
     EXPECT_EQ(2u, stack->children().size());
-    auto *remainingBadge = find(left, "remove-widget", find);
-    ASSERT_NE(nullptr, remainingBadge);
     widgets.done();
-    frames(std::chrono::milliseconds(65));
-    EXPECT_GT(remainingBadge->opacity(), 0);
-    EXPECT_LT(remainingBadge->opacity(), 1);
-    frames(std::chrono::milliseconds(190));
-    EXPECT_DOUBLE_EQ(0, remainingBadge->opacity());
+    column.close();
+    frames(std::chrono::milliseconds(225));
+}
+
+TEST_F(ControlCenterTest, MemoryWidgetKeepsItsPixelsWhileHoveredAndWhenItsBadgeFades)
+{
+    auto history = std::make_unique<shell::Notifications>(shell->bus(), shell->applications(), &shell->tasks(),
+            shell::Notifications::Files {directory.filePath("ram-notifications.conf"), directory.filePath("ram-history"),
+                                         directory.filePath("ram-images")});
+    auto *notifications = shell->addComponent(std::make_unique<shell::NotificationUi>(shell.get(), std::move(history)));
+    auto &column = notifications->centre();
+    const auto file = directory.filePath("ram-widgets.conf");
+    {
+        base::Settings config(file);
+        config.setValue("Widgets/count", 2);
+        config.setValue("Widgets/hasCentreLayout", true);
+        config.setValue("Widgets/0-kind", 1); // Calendar
+        config.setValue("Widgets/0-inCentre", true);
+        config.setValue("Widgets/1-kind", 6); // System Monitor
+        config.setValue("Widgets/1-size", 1); // Medium, on a second row
+        config.setValue("Widgets/1-inCentre", true);
+        config.sync();
+    }
+    shell::DesktopWidgets widgets(shell.get(), *center, file);
+    widgets.setNotificationCentre(column);
+    column.open(bar.get(), {1320, kMenuBar});
+    frames(std::chrono::milliseconds(325));
+    auto *panel = column.shellWindow();
+    ASSERT_NE(nullptr, panel);
+    const auto find = [](ui::View *root, const auto &self) -> ui::View * {
+        if (root->name() == "notification-widgets")
+            return root;
+        for (const auto &child : root->children())
+            if (auto *match = self(child.get(), self))
+                return match;
+        return nullptr;
+    };
+    auto *stack = find(panel->window()->contentView(), find);
+    ASSERT_NE(nullptr, stack);
+    ASSERT_EQ(2u, stack->children().size());
+    const auto *card = stack->children().back().get();
+    EXPECT_EQ(card->localRect(), card->visualRect());
+    const auto pixel = [&](ui::PointF local) -> ui::Color {
+        const auto *texture = dynamic_cast<const testsupport::FakeTexture *>(panel->surface()->node()->texture());
+        if (!texture) {
+            ADD_FAILURE() << "Notification Center has no rendered texture";
+            return {};
+        }
+        const auto p = card->mapToWindow(local);
+        const int x = int(p.x), y = int(p.y);
+        if (x < 0 || x >= texture->size().width() || y < 0 || y >= texture->size().height()) {
+            ADD_FAILURE() << "Sample lies outside the Notification Center texture";
+            return {};
+        }
+        const auto *rgba = texture->pixels().data() + (size_t(y) * texture->size().width() + x) * 4;
+        return {rgba[0], rgba[1], rgba[2], rgba[3]};
+    };
+    constexpr ui::PointF badgeSpot {17, 23};
+    const std::array<ui::PointF, 3> artSpots {{{16, 40}, {card->geometry().width / 2, 40}, {card->geometry().width - 16, 40}}};
+    for (const auto spot : artSpots)
+        EXPECT_EQ(ui::Color::rgb(0x17181a), pixel(spot));
+    const auto withoutBadge = pixel(badgeSpot);
+
+    widgets.edit(true);
+    frames(std::chrono::milliseconds(85));
+    const auto fadingIn = pixel(badgeSpot);
+    EXPECT_NE(withoutBadge, fadingIn);
+    for (const auto spot : artSpots)
+        EXPECT_EQ(ui::Color::rgb(0x17181a), pixel(spot));
+    frames(std::chrono::milliseconds(300));
+    const auto withBadge = pixel(badgeSpot);
+    EXPECT_NE(fadingIn, withBadge);
+    widgets.done();
+    frames(std::chrono::milliseconds(70));
+    const auto fadingOut = pixel(badgeSpot);
+    EXPECT_NE(withBadge, fadingOut);
+    EXPECT_NE(withoutBadge, fadingOut);
+    for (const auto spot : artSpots)
+        EXPECT_EQ(ui::Color::rgb(0x17181a), pixel(spot));
+    frames(std::chrono::milliseconds(170));
+    EXPECT_EQ(withoutBadge, pixel(badgeSpot));
+
+    const auto origin = column.geometry().topLeft();
+    const auto hover = card->mapToWindow({130, 50});
+    move(origin.x() + hover.x, origin.y() + hover.y);
+    frames(std::chrono::milliseconds(45));
+    EXPECT_TRUE(card->isHovered());
+    for (const auto spot : artSpots)
+        EXPECT_EQ(ui::Color::rgb(0x17181a), pixel(spot));
+    EXPECT_EQ(withoutBadge, pixel(badgeSpot));
     column.close();
     frames(std::chrono::milliseconds(225));
 }
