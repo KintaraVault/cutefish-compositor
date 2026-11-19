@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <numbers>
 
 #include <curl/curl.h>
@@ -24,6 +25,7 @@
 #include "ui/image_view.h"
 #include "ui/label.h"
 #include "ui/painter.h"
+#include "ui/path.h"
 #include "ui/theme.h"
 
 using cutefish::i18n::format;
@@ -385,34 +387,42 @@ void CardItem::pointerRelease(const ui::PointerEvent &event)
 IconButton::IconButton()
     : m_surface(ui::Theme::current().background)
 {
-    m_outgoing = addChild<SvgIcon>();
-    m_icon = addChild<SvgIcon>();
     setTracksHover(true);
 }
 
 IconButton::~IconButton() = default;
 
-void IconButton::setFile(std::string file)
+void IconButton::setTransport(Transport transport, bool white, bool playing)
 {
-    if (file == m_file)
-        return;
-    if (window() && !m_file.empty()) {
-        if (!m_swap)
-            m_swap = std::make_unique<ui::Animation>(window());
-        m_swap->stop();
-        m_outgoing->setFile(m_file);
-        m_outgoing->setOpacity(1);
-        m_icon->setOpacity(0);
-        m_swap->setDuration(std::chrono::milliseconds(155));
-        m_swap->setEasing(ui::Animation::Easing::OutCubic);
-        m_swap->onUpdate = [this](double t) {
-            m_outgoing->setOpacity(1 - t);
-            m_icon->setOpacity(t);
+    const ui::Color ink = white ? kWhite : kLightArtwork;
+    if (m_transport != transport || m_glyphInk != ink || m_playing != playing)
+        requestPaint();
+    m_transport = transport;
+    m_glyphInk = ink;
+    if (!window())
+        m_morph = playing ? 1 : 0;
+    else if (transport == Transport::PlayPause && m_playing != playing) {
+        m_morphMotion = std::make_unique<ui::Animation>(window());
+        m_morphMotion->setDuration(std::chrono::milliseconds(230));
+        m_morphMotion->setEasing(ui::Animation::Easing::InOutCubic);
+        m_morphMotion->onUpdate = [this, from = m_morph, to = playing ? 1. : 0.](double t) {
+            m_morph = std::lerp(from, to, t);
+            requestPaint();
         };
-        m_swap->start();
+        m_morphMotion->start();
     }
-    m_file = std::move(file);
-    m_icon->setFile(m_file);
+    m_playing = playing;
+}
+
+void IconButton::animateSkip()
+{
+    if (!window() || m_transport == Transport::PlayPause)
+        return;
+    m_skip = std::make_unique<ui::Animation>(window());
+    m_skip->setDuration(std::chrono::milliseconds(300));
+    m_skip->setEasing(ui::Animation::Easing::OutCubic);
+    m_skip->onUpdate = [this](double t) { m_skipProgress = t; requestPaint(); };
+    m_skip->start();
 }
 
 void IconButton::setSurfaceColor(ui::Color color)
@@ -421,25 +431,12 @@ void IconButton::setSurfaceColor(ui::Color color)
     requestPaint();
 }
 
-void IconButton::layout()
-{
-    placeGlyphs();
-}
-
 void IconButton::setGlyphSize(double size)
 {
     if (m_size == size)
         return;
     m_size = size;
-    requestLayout();
-}
-
-void IconButton::placeGlyphs()
-{
-    const double size = (m_size > 0 ? m_size : geometry().height * .75) * (1 - .16 * m_press);
-    const ui::RectF glyph {(geometry().width - size) / 2, (geometry().height - size) / 2, size, size};
-    m_icon->setGeometry(glyph);
-    m_outgoing->setGeometry(glyph);
+    requestPaint();
 }
 
 void IconButton::animate()
@@ -449,7 +446,7 @@ void IconButton::animate()
     if (!window()) {
         m_press = press;
         m_ink = ink;
-        requestLayout();
+        requestPaint();
         return;
     }
     if (!m_motion)
@@ -460,7 +457,6 @@ void IconButton::animate()
     m_motion->onUpdate = [this, press, ink, fromPress = m_press, fromInk = m_ink](double t) {
         m_press = std::lerp(fromPress, press, t);
         m_ink = std::lerp(fromInk, ink, t);
-        placeGlyphs();
         requestPaint();
     };
     m_motion->start();
@@ -468,11 +464,54 @@ void IconButton::animate()
 
 void IconButton::paint(ui::Painter &painter)
 {
-    if (m_ink <= 0)
-        return;
-    const ui::Color color = panel::on(m_surface, m_ink * (panel::isDark(m_surface) ? .23 : .18));
     const ui::RectF rect = localRect();
-    painter.fillRoundedRect(rect, rect.height / 2, color);
+    if (m_ink > 0) {
+        const ui::Color color = panel::on(m_surface, m_ink * (panel::isDark(m_surface) ? .23 : .18));
+        painter.fillRoundedRect(rect, rect.height / 2, color);
+    }
+    const double unit = (m_size > 0 ? m_size : rect.height * .75) * (1 - .055 * m_press) / 24;
+    const auto shape = [&](const auto &points, double dx, double direction) {
+        ui::Path path;
+        for (size_t i = 0; i < points.size(); ++i) {
+            const ui::PointF p {rect.width / 2 + unit * direction * (points[i].x + dx),
+                                rect.height / 2 + unit * points[i].y};
+            if (i == 0)
+                path.moveTo(p);
+            else
+                path.lineTo(p);
+        }
+        path.close();
+        painter.fillPath(path, m_glyphInk);
+    };
+    using Quad = std::array<ui::PointF, 4>;
+    if (m_transport == Transport::PlayPause) {
+        // Two halves tile the play triangle exactly, then separate into pause bars.
+        constexpr std::array<Quad, 2> play {{
+            {{{-5,-8}, {0,-5}, {0,5}, {-5,8}}}, {{{0,-5}, {8,0}, {8,0}, {0,5}}},
+        }};
+        constexpr std::array<Quad, 2> pause {{
+            {{{-6,-7.5}, {-1.8,-7.5}, {-1.8,7.5}, {-6,7.5}}},
+            {{{1.8,-7.5}, {6,-7.5}, {6,7.5}, {1.8,7.5}}},
+        }};
+        if (m_morph == 0) {
+            shape(std::array<ui::PointF, 3>{{{-5,-8}, {8,0}, {-5,8}}}, 0, 1);
+        } else for (size_t part = 0; part < play.size(); ++part) {
+            Quad points;
+            for (size_t i = 0; i < points.size(); ++i)
+                points[i] = {std::lerp(play[part][i].x, pause[part][i].x, m_morph),
+                             std::lerp(play[part][i].y, pause[part][i].y, m_morph)};
+            shape(points, 0, 1);
+        }
+    } else {
+        constexpr std::array<ui::PointF, 3> arrow {{{-4,-5.7}, {5,0}, {-4,5.7}}};
+        const auto travel = [this](double delay) {
+            const double t = std::clamp((m_skipProgress - delay) / (1 - delay), 0., 1.);
+            return 5 * std::sin(std::numbers::pi * t);
+        };
+        const int direction = static_cast<int>(m_transport);
+        shape(arrow, -4.8 + .9 * m_press + travel(.18), direction);
+        shape(arrow, 4.2 + .9 * m_press + travel(0), direction);
+    }
 }
 
 void IconButton::hoverChanged()
@@ -516,24 +555,25 @@ void IconButton::pointerRelease(const ui::PointerEvent &event)
     pointerMove(event);
     m_pressed = false;
     animate();
-    if (m_inside && isEnabled() && onClicked)
+    if (m_inside && isEnabled() && onClicked) {
+        animateSkip();
         onClicked();
+    }
 }
 
 // MprisItem's buttons: 28 px each, 6 apart.
 static constexpr double kButtonSize = 28;
 
-void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, double phase, double energy)
+void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, const MediaBands &bands)
 {
     static constexpr std::array envelope {.32, .64, .98, .92, .62, .34};
     const double step = rect.width / envelope.size();
     const double width = step * .58;
     for (size_t i = 0; i < envelope.size(); ++i) {
-        const double beat = .76 + .24 * std::sin(phase * 2 * std::numbers::pi * (3 + i % 3) + i * 1.2);
-        const double height = std::lerp(width, rect.height * envelope[i] * beat, energy);
+        const double height = std::lerp(width, rect.height * envelope[i], bands[i]);
         painter.fillRoundedRect({rect.x + step * (i + .5) - width / 2,
                                  rect.y + (rect.height - height) / 2, width, height}, width / 2,
-                                ui::Color::rgb(0xaad4ff).withAlpha(.57 + .39 * energy));
+                                 ui::Color::rgb(0xaad4ff).withAlpha(.57 + .39 * bands[i]));
     }
 }
 
@@ -555,8 +595,10 @@ public:
     {
         m_duration = duration;
         m_seekable = seekable;
-        if (reset || !seekable)
+        if ((reset || !seekable) && preview) {
             preview.reset();
+            requestPaint();
+        }
     }
 
     void setFraction(double fraction)
@@ -576,6 +618,10 @@ protected:
         if (m_fraction > 0) {
             const double width = std::min(track.width, std::max(h, track.width * m_fraction));
             painter.fillRoundedRect({0, track.y, width, h}, h / 2, kWhite.withAlpha(.87));
+        }
+        if (m_seekable && (preview || isHovered())) {
+            const double cx = std::clamp(track.width * m_fraction, h / 2, std::max(h / 2, track.width - h / 2));
+            painter.fillRoundedRect({cx - 4.5, (geometry().height - 9) / 2, 9, 9}, 4.5, kWhite);
         }
     }
     void hoverChanged() override { requestPaint(); }
@@ -610,21 +656,7 @@ private:
 
 MediaTile::MediaTile()
 {
-    m_cover = addChild<SvgIcon>();
-    m_art = addChild<ui::ImageView>();
-    m_art->setName("media-cover-image");
-    m_art->setFillMode(ui::ImageView::FillMode::PreserveAspectFit);
-    m_art->setCornerRadius(ui::Theme::current().smallRadius, ui::Corners::Continuous);
-    m_art->setVisible(false);
-    m_art->onStatusChanged = [this](ui::ImageView::Status status) {
-        if (status == ui::ImageView::Status::Null)
-            return;
-        m_artReady = status == ui::ImageView::Status::Ready;
-        m_artLoading = status == ui::ImageView::Status::Loading;
-        m_art->setVisible(m_artReady);
-        animateArtwork();
-        requestPaint();
-    };
+    m_cover = addChild<MediaCover>();
     m_title = addChild<ui::Label>();
     m_title->setElide(ui::Label::Elide::Right);
     m_artist = addChild<ui::Label>();
@@ -671,8 +703,7 @@ void MediaTile::setActivityStyle()
     };
     m_elapsed = timeLabel("media-elapsed", ui::Label::TextAlignment::Left);
     m_remaining = timeLabel("media-remaining", ui::Label::TextAlignment::Right);
-    m_art->setFillMode(ui::ImageView::FillMode::PreserveAspectCrop);
-    m_art->setCornerRadius(10, ui::Corners::Continuous);
+    m_cover->setStyle(MediaCover::Style::Activity);
 }
 
 static std::string formatMediaTime(double time, bool remaining = false)
@@ -715,16 +746,7 @@ void MediaTile::animateTimeline()
     m_timeline->setDuration(std::chrono::seconds(4));
     m_timeline->setLoops(ui::Animation::Infinite);
     m_timeline->setEasing(ui::Animation::Easing::Linear);
-    m_timeline->onUpdate = [this](double t) {
-        updateTimeline();
-        if (m_state.playing)
-            m_wavePhase = t;
-        const double target = m_state.playing ? 1 : 0;
-        if (m_waveEnergy != target || m_state.playing) {
-            m_waveEnergy += std::clamp(target - m_waveEnergy, -.09, .08);
-            requestPaint();
-        }
-    };
+    m_timeline->onUpdate = [this](double) { updateTimeline(); };
     m_timeline->start();
 }
 
@@ -755,93 +777,133 @@ void MediaTile::setState(const MediaState &state)
     m_title->setText(std::move(title));
     m_artist->setText(state.hasPlayer ? state.artist : std::string());
     updateArtwork();
-    loadArtwork();
+    m_cover->setUrl(state.hasPlayer ? state.artUrl : std::string());
     requestLayout();
 }
 
 void MediaTile::updateArtwork()
 {
     const bool white = m_controlStyle || panel::dark();
-    m_cover->setFile(panel::artwork("media-cover", white));
-    m_previous->setFile(m_progress ? panel::artwork("activity-previous") : panel::artwork("media-skip-backward-symbolic", white));
-    m_play->setFile(panel::artwork(m_state.playing ? "media-playback-pause-symbolic"
-                                                   : "media-playback-start-symbolic",
-                                   white));
-    m_next->setFile(m_progress ? panel::artwork("activity-next") : panel::artwork("media-skip-forward-symbolic", white));
+    m_previous->setTransport(IconButton::Transport::Previous, white);
+    m_play->setTransport(IconButton::Transport::PlayPause, white, m_state.playing);
+    m_next->setTransport(IconButton::Transport::Next, white);
     for (IconButton *button : {m_previous, m_play, m_next})
         button->setSurfaceColor(m_progress ? ui::Color::rgb(0x242424) : panel::tileInkColor());
 }
 
-void MediaTile::loadArtwork()
+MediaCover::MediaCover(Style style)
+    : m_style(style)
 {
-    const std::string url = m_state.hasPlayer ? m_state.artUrl : std::string();
-    if (url == m_artUrl)
+    m_image = addChild<ui::ImageView>();
+    m_image->setName("media-cover-image");
+    m_image->onStatusChanged = [this](ui::ImageView::Status status) {
+        m_ready = status == ui::ImageView::Status::Ready;
+        m_loading = status == ui::ImageView::Status::Loading;
+        animate();
+        requestPaint();
+    };
+}
+
+MediaCover::~MediaCover() = default;
+
+void MediaCover::setStyle(Style style)
+{
+    if (m_style == style)
         return;
-    m_artUrl = url;
-    m_artRequest.reset();
-    m_art->setSource({});
-    m_artFile.reset();
-    m_artReady = false;
-    m_artLoading = !url.empty();
-    m_art->setVisible(false);
-    m_cover->setVisible(true);
+    m_style = style;
+    requestLayout();
+}
+
+void MediaCover::setUrl(const std::string &url)
+{
+    if (url == m_url)
+        return;
+    m_url = url;
+    m_request.reset();
+    m_image->setSource({});
+    m_file.reset();
+    m_ready = false;
+    m_loading = !url.empty();
     std::string path;
     if (base::url::isLocalFile(url))
         path = base::url::toLocalFile(url).value_or(std::string());
     else if (url.starts_with('/'))
         path = url;
     if (!path.empty()) {
-        m_art->setSource(path);
+        m_image->setSource(path);
     } else if (url.starts_with("https://") || url.starts_with("http://")) {
+        // Compact and expanded views can reuse the downloaded file while
+        // either one still has it. The ImageView caches each decoded size.
+        static std::map<std::string, std::weak_ptr<base::file::TemporaryFile>> covers;
+        std::erase_if(covers, [](const auto &entry) { return entry.second.expired(); });
+        if (auto it = covers.find(url); it != covers.end()) {
+            m_file = it->second.lock();
+            m_image->setSource(m_file->path());
+            return;
+        }
         static base::ThreadPool pool(2);
-        m_artRequest = std::make_shared<int>();
-        std::weak_ptr<int> request = m_artRequest;
+        m_request = std::make_shared<int>();
+        std::weak_ptr<int> request = m_request;
         pool.run([url, request] { return fetchCover(url, request); },
                  [this, request](std::shared_ptr<base::file::TemporaryFile> file) {
             if (request.expired())
                 return;
-            m_artFile = file;
+            m_file = file;
             if (file) {
-                m_art->setSource(file->path());
+                covers[m_url] = file;
+                m_image->setSource(file->path());
             } else {
-                m_artLoading = false;
-                animateArtwork();
+                m_loading = false;
+                animate();
                 requestPaint();
             }
         }).detach();
     } else {
-        m_artLoading = false;
+        m_loading = false;
     }
-    animateArtwork();
+    animate();
+    requestPaint();
 }
 
-void MediaTile::animateArtwork()
+void MediaCover::animate()
 {
+    m_animation.reset();
+    m_phase = 0;
+    // Keep ImageView visible while loading: its layout starts the decoder.
+    m_image->setOpacity(m_ready && !window() ? 1 : 0);
     if (!window())
         return;
-    m_artAnimation = std::make_unique<ui::Animation>(window());
-    m_artPhase = 0;
-    if (m_artReady) {
-        m_art->setOpacity(0);
-        m_artAnimation->setDuration(std::chrono::milliseconds(280));
-        m_artAnimation->setEasing(ui::Animation::Easing::OutCubic);
-        m_artAnimation->onUpdate = [this](double t) { m_art->setOpacity(t); m_artPhase = t; requestPaint(); };
-        m_artAnimation->onFinished = [this] { m_cover->setVisible(false); };
-    } else if (m_artLoading) {
-        m_artAnimation->setDuration(std::chrono::milliseconds(850));
-        m_artAnimation->setEasing(ui::Animation::Easing::Linear);
-        m_artAnimation->setLoops(ui::Animation::Infinite);
-        m_artAnimation->onUpdate = [this](double t) { m_artPhase = t; requestPaint(); };
-    } else {
+    if (!m_ready && !m_loading)
         return;
+    m_animation = std::make_unique<ui::Animation>(window());
+    if (m_ready) {
+        m_animation->setDuration(std::chrono::milliseconds(280));
+        m_animation->setEasing(ui::Animation::Easing::OutCubic);
+        m_animation->onUpdate = [this](double t) { m_image->setOpacity(t); m_phase = t; requestPaint(); };
+    } else {
+        m_animation->setDuration(std::chrono::milliseconds(850));
+        m_animation->setEasing(ui::Animation::Easing::Linear);
+        m_animation->setLoops(ui::Animation::Infinite);
+        m_animation->onUpdate = [this](double t) { m_phase = t; requestPaint(); };
     }
-    m_artAnimation->start();
+    m_animation->start();
+}
+
+void MediaCover::layout()
+{
+    const auto rect = localRect();
+    m_image->setFillMode(m_style == Style::Activity ? ui::ImageView::FillMode::PreserveAspectCrop
+                                                    : ui::ImageView::FillMode::PreserveAspectFit);
+    const double radius = m_style == Style::Activity ? rect.width * .20 : ui::Theme::current().smallRadius;
+    m_image->setCornerRadius(radius, ui::Corners::Continuous);
+    m_image->setGeometry(rect);
+    m_image->setSourceSize(m_style == Style::Activity && rect.width < 25 ? ui::SizeF{16, 16} : rect.size());
+    if (!m_animation && (m_ready || m_loading))
+        animate();
 }
 
 void MediaTile::layout()
 {
-    if (!m_artAnimation && (m_artReady || m_artLoading))
-        animateArtwork();
     const ui::Theme &theme = ui::Theme::current();
     updateArtwork();
     const double padding = theme.largeSpacing;
@@ -850,10 +912,7 @@ void MediaTile::layout()
         const double w = localRect().width;
         const double inset = 16;
         const ui::RectF art {inset, 15, 51, 51};
-        m_cover->setOpacity(0);
         m_cover->setGeometry(art);
-        m_art->setGeometry(art);
-        m_art->setSourceSize({art.width, art.height});
         const double x = art.x + art.width + 10;
         const double textWidth = std::max(0., w - x - 47);
         m_title->setFontSize(14);
@@ -881,10 +940,8 @@ void MediaTile::layout()
         const double scale = std::clamp(h / 121., 1., 1.3);
         const double cover = std::min(53.0, h * .29);
         const ui::RectF art {10, 10, cover, cover};
-        m_cover->setOpacity(0);
+        m_cover->setStyle(MediaCover::Style::Control);
         m_cover->setGeometry(art);
-        m_art->setGeometry(art);
-        m_art->setSourceSize({cover, cover});
         m_title->setWeight(650);
         m_title->setFontSize(std::round(12 * scale));
         m_title->setColor(kWhite);
@@ -902,8 +959,6 @@ void MediaTile::layout()
     const double content = geometry().height - 2 * padding;
     const ui::RectF art {padding, padding, content, content};
     m_cover->setGeometry(art);
-    m_art->setGeometry(art);
-    m_art->setSourceSize({content, content});
 
     // The last glyph lines up with the sliders' tracks: the artwork keeps 3.125
     // of its 16 units clear, and 2px more make up for the tracks' rounded ends.
@@ -933,29 +988,44 @@ void MediaTile::paint(ui::Painter &painter)
     if (!m_controlStyle)
         panel::paintTile(painter, localRect());
     if (m_progress)
-        paintLiveMediaWave(painter, {localRect().width - 39, 34, 23, 13}, m_wavePhase, m_waveEnergy);
-    if (m_artReady && m_artPhase >= 1)
+        paintLiveMediaWave(painter, {localRect().width - 39, 34, 23, 13}, m_bands);
+}
+
+void MediaTile::setBands(const MediaBands &bands)
+{
+    if (m_bands != bands) {
+        m_bands = bands;
+        requestPaint();
+    }
+}
+
+void MediaCover::paint(ui::Painter &painter)
+{
+    if (m_ready && m_phase >= 1)
         return;
     // The cards' plate colour under the default cover, inside its mask.
     const ui::Color surface = panel::tileInkColor();
-    const ui::RectF art = m_cover->geometry();
-    if (m_progress && !m_artLoading) {
+    const ui::RectF art = localRect();
+    if (m_style == Style::Activity && (!m_loading || art.width < 25)) {
         paintLiveMediaIcon(painter, art);
         return;
     }
-    painter.fillRoundedRect(art, m_controlStyle ? 11 : ui::Theme::current().smallRadius,
-                            m_controlStyle ? kWhite.withAlpha(.12) : panel::on(surface, panel::isDark(surface) ? 0.15 : 0.1),
+    const bool control = m_style != Style::Legacy;
+    painter.fillRoundedRect(art, control ? 11 : ui::Theme::current().smallRadius,
+                            control ? kWhite.withAlpha(.12) : panel::on(surface, panel::isDark(surface) ? 0.15 : 0.1),
                             ui::Corners::Continuous);
-    if (!m_artReady && !m_artLoading && m_controlStyle) {
+    if (!m_loading && control) {
         const double size = art.width * .42;
         painter.drawSvg(panel::artwork("media-playback-start-symbolic", true),
                         {art.x + (art.width - size) / 2, art.y + (art.height - size) / 2, size, size},
                         kWhite.withAlpha(.66));
     }
-    if (m_artLoading && m_controlStyle) {
+    if (!control)
+        painter.drawSvg(panel::artwork("media-cover", panel::dark()), art);
+    if (m_loading && control) {
         const ui::PointF c {art.x + art.width / 2, art.y + art.height / 2};
         for (int i = 0; i < 12; ++i) {
-            const double angle = (i / 12. + m_artPhase) * 6.283185307;
+            const double angle = (i / 12. + m_phase) * 2 * std::numbers::pi;
             painter.fillRoundedRect({c.x + 9 * std::cos(angle) - 1.4, c.y + 9 * std::sin(angle) - 1.4, 2.8, 2.8},
                                     1.4, kWhite.withAlpha(.15 + .7 * i / 11));
         }

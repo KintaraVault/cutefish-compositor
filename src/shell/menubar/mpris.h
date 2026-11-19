@@ -14,6 +14,7 @@
 
 #include "base/dbus.h"
 #include "base/signal.h"
+#include "base/timer.h"
 #include "shell/common/pending_calls.h"
 #include "shell/common/sender_filter.h"
 
@@ -42,6 +43,7 @@ public:
     bool isReady() const { return m_rootReady && m_playerReady; }
 
     std::string identity() const;
+    uint32_t processId() const { return m_processId; }
 
     PlaybackStatus playbackStatus() const;
     bool canControl() const;
@@ -57,6 +59,7 @@ public:
     double duration() const;
     base::dbus::ObjectPath trackId() const;
     bool canSetPosition() const;
+    bool atEnd() const { return m_atEnd; }
     void refreshPosition();
     void setPosition(double seconds);
 
@@ -78,6 +81,9 @@ private:
     bool playerFlag(const char *name, bool fallback = false) const;
     void callPlayer(const char *method);
     void samplePosition(std::optional<double> seconds);
+    void observePosition(double seconds);
+    bool hasTrackPath() const;
+    void sendSeek(uint64_t request, int64_t micros, std::optional<double> before, bool absolute);
 
     base::dbus::Connection *m_bus;
     std::string m_service;
@@ -91,10 +97,17 @@ private:
     base::dbus::VariantMap m_metadata;
     bool m_rootReady = false;
     bool m_playerReady = false;
+    uint32_t m_processId = 0;
+    base::Timer m_positionPoll;
     std::optional<double> m_position;
+    std::optional<double> m_nearEndPosition;
+    bool m_atEnd = false;
     std::chrono::steady_clock::time_point m_sampleTime;
     uint64_t m_positionRevision = 0;
+    uint64_t m_seekSerial = 0;
+    std::optional<uint64_t> m_seekRequest;
     bool m_readingPosition = false;
+    bool m_readPositionAgain = false;
 };
 
 // The media players on the bus and the one the control centre shows. A

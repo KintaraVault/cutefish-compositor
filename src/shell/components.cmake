@@ -205,6 +205,8 @@ find_package(CutefishClients REQUIRED COMPONENTS appearance)
 add_library(cutefish-shell-menubar-view STATIC
     src/shell/menubar/media_activity.cpp
     src/shell/menubar/media_activity.h
+    src/shell/menubar/media_spectrum.cpp
+    src/shell/menubar/media_spectrum.h
     src/shell/menubar/menu_popup.cpp
     src/shell/menubar/menu_popup.h
     src/shell/menubar/device_usage.cpp

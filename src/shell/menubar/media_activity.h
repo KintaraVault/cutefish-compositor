@@ -9,6 +9,7 @@
 
 #include "base/signal.h"
 #include "shell/controlcenter/control_center_services.h"
+#include "shell/menubar/media_spectrum.h"
 #include "ui/view.h"
 
 namespace cutefish::ui { class Animation; }
@@ -16,6 +17,7 @@ namespace cutefish::ui { class Animation; }
 namespace cutefish::shell {
 
 class MediaTile;
+class MediaCover;
 class MprisManager;
 class Shell;
 class ShellWindow;
@@ -47,6 +49,7 @@ private:
     void open();
     void finishClosing();
     void animateCapsule();
+    void placeCover();
     void animatePopup();
     void applyPopup();
     ShellWindow *popupHost() const;
@@ -55,6 +58,9 @@ private:
     ShellWindow &m_bar;
     MprisManager &m_players;
     MediaState m_state;
+    MediaSpectrum m_spectrum;
+    MediaBands m_bands {};
+    MediaCover *m_cover;
     std::string m_track;
     std::string m_service;
     std::unique_ptr<ui::Window> m_popup;
@@ -62,8 +68,6 @@ private:
     std::unique_ptr<ui::Animation> m_capsuleMotion;
     std::unique_ptr<ui::Animation> m_popupMotion;
     std::shared_ptr<char> m_popupToken;
-    double m_phase = 0;
-    double m_energy = 0;
     double m_visibility = 0;
     double m_press = 0;
     double m_openProgress = 0;

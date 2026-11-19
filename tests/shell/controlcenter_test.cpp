@@ -673,23 +673,27 @@ TEST_F(ControlCenterTest, MediaCoverFadesInAndClearsWhenThePlayerStops)
     frame();
     auto *media = center->controlCenterView()->media();
     ASSERT_NE(media, nullptr);
-    const auto findCover = std::ranges::find_if(media->children(), [](const auto &child) {
-        return child->name() == "media-cover-image";
-    });
-    ASSERT_NE(findCover, media->children().end());
-    auto *cover = static_cast<ui::ImageView *>(findCover->get());
+    ui::ImageView *cover = nullptr;
+    for (const auto &view : media->children()) {
+        for (const auto &child : view->children()) {
+            if (child->name() == "media-cover-image")
+                cover = static_cast<ui::ImageView *>(child.get());
+        }
+    }
+    ASSERT_NE(cover, nullptr);
     shell::MediaState playing;
     playing.hasPlayer = true;
     playing.artUrl = path;
     media->setState(playing);
-    for (int n = 0; n < 100 && !cover->isVisible(); ++n)
+    for (int n = 0; n < 160 && cover->status() != ui::ImageView::Status::Ready; ++n)
         frames(std::chrono::milliseconds(16));
-    ASSERT_TRUE(cover->isVisible());
+    ASSERT_EQ(cover->status(), ui::ImageView::Status::Ready);
     EXPECT_LT(cover->opacity(), 1);
     frames(std::chrono::milliseconds(325));
     EXPECT_DOUBLE_EQ(cover->opacity(), 1);
     media->setState({});
-    EXPECT_FALSE(cover->isVisible());
+    EXPECT_EQ(cover->status(), ui::ImageView::Status::Null);
+    EXPECT_DOUBLE_EQ(cover->opacity(), 0);
 }
 
 TEST_F(ControlCenterTest, TheWifiBluetoothAndSoundTilesOpenTheirPanelsAsDetailPages)

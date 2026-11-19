@@ -51,6 +51,7 @@
 #include "temporary_directory.h"
 #include "ui/bitmap.h"
 #include "ui/embedded_window.h"
+#include "ui/image_view.h"
 #include "ui/label.h"
 #include "ui/menu.h"
 #include "ui/theme.h"
@@ -281,10 +282,20 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     int64_t position = 6000000;
     player.addProperty("PlaybackStatus", [&] { return status; });
     player.addProperty("Position", [&] { return position; });
-    player.addProperty("Metadata", [] {
+    test::TemporaryDirectory coverDir;
+    auto coverPath = coverDir.filePath("cover.png");
+    if (const auto *url = std::getenv("CUTEFISH_TEST_COVER_URL")) {
+        coverPath = url;
+    } else {
+        ui::Bitmap bitmap(24, 24, ui::Bitmap::Format::Argb32Premultiplied);
+        std::fill_n(reinterpret_cast<uint32_t *>(bitmap.bits()), bitmap.stride() * bitmap.height() / 4, 0xffc05830);
+        ASSERT_TRUE(bitmap.savePng(coverPath));
+    }
+    player.addProperty("Metadata", [&] {
         return dbus::VariantMap {{"xesam:title", dbus::Variant(std::string("A Weekday In A Small Town"))},
                                 {"xesam:artist", dbus::Variant(std::vector<std::string>{"FSM Team"})},
                                 {"mpris:trackid", dbus::Variant(dbus::ObjectPath {"/song/one"})},
+                                {"mpris:artUrl", dbus::Variant(coverPath)},
                                 {"mpris:length", dbus::Variant(int64_t(240000000))}};
     });
     for (const char *name : {"CanControl", "CanPause", "CanPlay", "CanSeek", "CanGoNext", "CanGoPrevious"})
@@ -310,6 +321,23 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     ASSERT_TRUE(client.connection->requestName("org.mpris.MediaPlayer2.LiveActivityTest"));
     ASSERT_TRUE(test::runUntil([&] { return pill->isVisible(); }));
     frames(215);
+    const auto image = [](const ui::View &parent) -> ui::ImageView * {
+        for (const auto &view : parent.children()) {
+            for (const auto &child : view->children()) {
+                if (child->name() == "media-cover-image")
+                    return static_cast<ui::ImageView *>(child.get());
+            }
+        }
+        return nullptr;
+    };
+    const auto coverReady = [&](const ui::View &parent) {
+        const auto *cover = image(parent);
+        ASSERT_NE(cover, nullptr);
+        for (int i = 0; i < 180 && cover->status() != ui::ImageView::Status::Ready; ++i)
+            frames(16);
+        EXPECT_EQ(cover->status(), ui::ImageView::Status::Ready);
+    };
+    coverReady(*pill);
     const auto slot = onScreen(pill);
     const auto control = onScreen(bar->controlIcon());
     EXPECT_GT(slot.x, kOutput.width() / 2);
@@ -326,6 +354,7 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     EXPECT_TRUE(popup->surface()->node()->hasBackgroundBlur());
     verifyActivityGlass(*popup);
     auto *tile = static_cast<shell::MediaTile *>(popup->window()->contentView());
+    coverReady(*tile);
     const auto clickChild = [&](const ui::View *view) {
         const auto rect = onScreen(view);
         click(bounds.x() + rect.x + rect.width / 2, bounds.y() + rect.y + rect.height / 2);
@@ -341,6 +370,18 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     ASSERT_NE(progress, tile->children().end());
     clickChild(progress->get());
     ASSERT_TRUE(test::runUntil([&] { return position == 120000000; }));
+    const auto slider = onScreen(progress->get());
+    const auto atFraction = [&](double fraction) { return bounds.x() + slider.x + slider.width * fraction; };
+    const auto y = bounds.y() + slider.y + slider.height / 2;
+    move(atFraction(.25), y);
+    input.onPointerButton(at(time += 20), BTN_LEFT, true);
+    move(atFraction(.75), y);
+    EXPECT_EQ(position, 120000000); // Preview while dragging, send on release.
+    input.onPointerButton(at(time += 20), BTN_LEFT, false);
+    ASSERT_TRUE(test::runUntil([&] { return position == 180000000; }));
+    key(KEY_LEFT);
+    ASSERT_TRUE(test::runUntil([&] { return position != 180000000; }));
+    EXPECT_NEAR(position, 175000000, 2);
     key(KEY_ESC);
     frames(205);
     EXPECT_FALSE(bar->panelOpen());
@@ -361,6 +402,25 @@ TEST_F(MenuBarViewTest, ActivityOpensAndControlsTheSessionPlayer)
     frames(220);
     EXPECT_FALSE(pill->isVisible());
     EXPECT_EQ(onScreen(bar->controlIcon()), control);
+}
+
+TEST_F(MenuBarViewTest, SpectrumReadsTheSelectedPipeWireProcess)
+{
+    const auto *pid = std::getenv("CUTEFISH_TEST_AUDIO_PID");
+    if (!pid)
+        GTEST_SKIP() << "No live PipeWire fixture";
+    shell::MediaSpectrum spectrum;
+    const auto loudness = [&] {
+        const auto bands = spectrum.levels();
+        return *std::ranges::max_element(bands);
+    };
+    spectrum.setPlayer(1);
+    frames(250);
+    EXPECT_EQ(loudness(), 0);
+    spectrum.setPlayer(static_cast<uint32_t>(std::stoul(pid)));
+    ASSERT_TRUE(test::runUntil([&] { return loudness() > .15; }));
+    spectrum.setPlayer(0);
+    EXPECT_EQ(loudness(), 0);
 }
 
 TEST_F(MenuBarViewTest, TheBarIsAPanelAlongThePrimaryOutputsTop)

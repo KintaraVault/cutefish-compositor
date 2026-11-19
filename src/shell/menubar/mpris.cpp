@@ -25,7 +25,16 @@ MprisPlayer::MprisPlayer(dbus::Connection *bus, std::string service)
     , m_player(bus, m_service, kPath, kPlayerInterface)
     , m_sender(bus, m_service)
 {
+    m_positionPoll.onTimeout = [this] { refreshPosition(); };
     if (m_bus) {
+        const dbus::Proxy daemon(m_bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus");
+        m_calls.track([&](std::function<void()> finished) {
+            return daemon.callAsync("GetConnectionUnixProcessID", [this, finished](const dbus::Reply &reply) {
+                m_processId = reply.value<uint32_t>().value_or(0);
+                changed();
+                finished();
+            }, m_service);
+        });
         dbus::MatchRule rule;
         rule.sender = m_service;
         rule.path = kPath;
@@ -47,8 +56,13 @@ MprisPlayer::MprisPlayer(dbus::Connection *bus, std::string service)
         rule.member = "Seeked";
         m_matches.push_back(m_bus->subscribe(rule, [this](const dbus::Message &message) {
             int64_t position;
-            if (m_sender.accepts(message) && message.read(position))
+            if (!m_seekRequest && m_sender.accepts(message) && message.read(position)) {
+                const bool ended = std::exchange(m_atEnd, false);
+                m_nearEndPosition.reset();
                 samplePosition(std::max(int64_t(0), position) / 1e6);
+                if (ended)
+                    changed();
+            }
         }));
     }
     load(kRootInterface);
@@ -79,6 +93,7 @@ void MprisPlayer::apply(const std::string &interface, const dbus::VariantMap &pr
     const PlaybackStatus status = playbackStatus();
     const auto oldTrack = trackId();
     const auto oldTitle = title();
+    const auto oldDuration = duration();
     const auto oldPosition = position();
     for (const auto &[name, value] : properties) {
         stored[name] = value;
@@ -86,15 +101,33 @@ void MprisPlayer::apply(const std::string &interface, const dbus::VariantMap &pr
             m_metadata = value.value<dbus::VariantMap>();
     }
     if (!root) {
+        const auto currentStatus = playbackStatus();
+        const bool trackChanged = oldTrack != trackId() || oldDuration != duration()
+                || (!hasTrackPath() && oldTitle != title());
+        if (trackChanged || currentStatus == PlaybackStatus::Stopped)
+            m_seekRequest.reset();
+        if (trackChanged || currentStatus == PlaybackStatus::Stopped
+                || (currentStatus == PlaybackStatus::Playing && status != currentStatus)) {
+            m_atEnd = false;
+            m_nearEndPosition.reset();
+        }
         if (const auto pos = properties.find("Position"); pos != properties.end()) {
             const auto micros = pos->second.get<int64_t>();
-            samplePosition(micros && *micros >= 0 ? std::optional<double>(*micros / 1e6) : std::nullopt);
-        } else if (playbackStatus() == PlaybackStatus::Stopped || oldTrack != trackId()
-                   || (oldTrack.path.empty() && oldTitle != title())) {
+            if (!m_seekRequest)
+                samplePosition(micros && *micros >= 0 ? std::optional<double>(*micros / 1e6) : std::nullopt);
+        } else if (currentStatus == PlaybackStatus::Stopped || trackChanged) {
             samplePosition(std::nullopt);
-        } else if (status != playbackStatus() || properties.contains("Rate")) {
+        } else if (status != currentStatus || properties.contains("Rate")) {
             samplePosition(oldPosition);
         }
+        if (currentStatus == PlaybackStatus::Playing) {
+            if (!m_positionPoll.isActive() && m_bus)
+                m_positionPoll.start(std::chrono::milliseconds(750));
+        } else {
+            m_positionPoll.stop();
+        }
+        if (currentStatus != PlaybackStatus::Stopped && (trackChanged || status != currentStatus))
+            refreshPosition();
     }
     changed();
     if (playbackStatus() != status)
@@ -182,7 +215,11 @@ std::string MprisPlayer::artUrl() const
 dbus::ObjectPath MprisPlayer::trackId() const
 {
     const auto it = m_metadata.find("mpris:trackid");
-    return it == m_metadata.end() ? dbus::ObjectPath() : it->second.value<dbus::ObjectPath>();
+    if (it == m_metadata.end())
+        return {};
+    if (const auto path = it->second.get<dbus::ObjectPath>())
+        return *path;
+    return {it->second.value<std::string>()};
 }
 
 double MprisPlayer::duration() const
@@ -203,7 +240,7 @@ std::optional<double> MprisPlayer::position() const
     if (!m_position || playbackStatus() == PlaybackStatus::Stopped)
         return std::nullopt;
     double elapsed = *m_position;
-    if (playbackStatus() == PlaybackStatus::Playing) {
+    if (playbackStatus() == PlaybackStatus::Playing && !m_atEnd) {
         const auto it = m_playerProperties.find("Rate");
         const double rate = it == m_playerProperties.end() ? 1 : it->second.value<double>(1);
         if (std::isfinite(rate))
@@ -212,32 +249,66 @@ std::optional<double> MprisPlayer::position() const
     return duration() > 0 ? std::clamp(elapsed, 0., duration()) : std::max(0., elapsed);
 }
 
+void MprisPlayer::observePosition(double seconds)
+{
+    const bool wasAtEnd = m_atEnd;
+    const bool wasSeekable = canSetPosition();
+    const double length = duration();
+    const bool atLimit = length > 0 && seconds >= length;
+    const bool nearEnd = length > 0 && seconds >= length - std::min(.25, length / 10);
+    // A player normally signals a track change or Stopped. Some leave the
+    // old metadata/status at the end; confirm with real samples, not merely
+    // the projected clock reaching the duration while buffering.
+    if (playbackStatus() == PlaybackStatus::Playing) {
+        m_atEnd = nearEnd && m_nearEndPosition && std::abs(seconds - *m_nearEndPosition) < .015;
+        m_nearEndPosition = nearEnd ? std::optional<double>(seconds) : std::nullopt;
+    } else {
+        m_atEnd = atLimit;
+        m_nearEndPosition.reset();
+    }
+    samplePosition(m_atEnd ? length : seconds);
+    if (wasAtEnd != m_atEnd || wasSeekable != canSetPosition())
+        changed();
+}
+
 void MprisPlayer::refreshPosition()
 {
-    if (!m_bus || m_readingPosition || playbackStatus() == PlaybackStatus::Stopped)
+    if (!m_bus || m_seekRequest || playbackStatus() == PlaybackStatus::Stopped)
         return;
+    if (m_readingPosition) {
+        m_readPositionAgain = true;
+        return;
+    }
     const auto revision = m_positionRevision;
     m_readingPosition = true;
     m_calls.track([&](std::function<void()> finished) {
         return m_player.getPropertyAsync("Position", [this, revision, finished](const dbus::Reply &reply) {
             m_readingPosition = false;
-            if (revision == m_positionRevision) {
+            if (!m_seekRequest && revision == m_positionRevision) {
                 const auto value = reply.value<dbus::Variant>();
                 const auto micros = value ? value->get<int64_t>() : std::nullopt;
                 if (micros && *micros >= 0)
-                    samplePosition(*micros / 1e6);
+                    observePosition(*micros / 1e6);
             }
+            if (std::exchange(m_readPositionAgain, false))
+                refreshPosition();
             finished();
         });
     });
 }
 
+bool MprisPlayer::hasTrackPath() const
+{
+    const auto path = trackId().path;
+    return path.size() > 1 && path.front() == '/' && path.back() != '/'
+            && path.find("//") == std::string::npos && path != "/org/mpris/MediaPlayer2/TrackList/NoTrack"
+            && path.find_first_not_of("/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") == std::string::npos;
+}
+
 bool MprisPlayer::canSetPosition() const
 {
-    const auto track = trackId();
-    return canControl() && playerFlag("CanSeek") && duration() > 0
-            && playbackStatus() != PlaybackStatus::Stopped
-            && !track.path.empty() && track.path != "/org/mpris/MediaPlayer2/TrackList/NoTrack";
+    return canControl() && playerFlag("CanSeek") && duration() > 0 && playbackStatus() != PlaybackStatus::Stopped
+            && (hasTrackPath() || position().has_value());
 }
 
 void MprisPlayer::setPosition(double seconds)
@@ -245,10 +316,44 @@ void MprisPlayer::setPosition(double seconds)
     if (!canSetPosition() || !std::isfinite(seconds))
         return;
     const auto length = m_metadata.at("mpris:length").value<int64_t>();
-    const auto micros = int64_t(std::clamp(static_cast<long double>(seconds) * 1e6L,
-                                           0.L, static_cast<long double>(length - 1)));
-    if (m_player.send("SetPosition", trackId(), micros))
-        samplePosition(micros / 1e6);
+    const int64_t micros = std::llround(std::clamp(static_cast<long double>(seconds) * 1e6L,
+                                                  0.L, static_cast<long double>(length - 1)));
+    const auto before = position();
+    const bool ended = std::exchange(m_atEnd, false);
+    m_nearEndPosition.reset();
+    const auto request = ++m_seekSerial;
+    const bool allowFallback = !m_seekRequest;
+    m_seekRequest = request;
+    samplePosition(micros / 1e6);
+    const bool absolute = hasTrackPath();
+    sendSeek(request, micros, absolute && !allowFallback ? std::nullopt : before, absolute);
+    if (ended)
+        changed();
+}
+
+void MprisPlayer::sendSeek(uint64_t request, int64_t micros, std::optional<double> before, bool absolute)
+{
+    m_calls.track([&](std::function<void()> finished) {
+        auto done = [this, request, micros, before, absolute, finished](const dbus::Reply &reply) {
+            // Signals from an earlier seek may still be queued. Keep the
+            // newest target until its method finishes, then read Position.
+            if (m_seekRequest == request) {
+                if (reply.isError() && absolute && before) {
+                    sendSeek(request, micros, before, false);
+                } else {
+                    m_seekRequest.reset();
+                    if (reply.isError())
+                        samplePosition(before);
+                    refreshPosition();
+                }
+            }
+            finished();
+        };
+        if (absolute)
+            return m_player.callAsync("SetPosition", std::move(done), trackId(), micros);
+        const int64_t offset = micros - int64_t(std::llround(before.value_or(0) * 1e6));
+        return m_player.callAsync("Seek", std::move(done), offset);
+    });
 }
 
 void MprisPlayer::callPlayer(const char *method)
@@ -311,6 +416,10 @@ MprisManager::MprisManager(dbus::Connection *bus)
             add(name);
         else if (newOwner.empty())
             remove(name);
+        else {
+            remove(name);
+            add(name);
+        }
     });
 
     const dbus::Proxy daemon(m_bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus");

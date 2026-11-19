@@ -572,6 +572,11 @@ public:
             position = value;
             player.emitSignal("Seeked", position);
         });
+        player.addMethod("Seek", [this](int64_t offset) {
+            relativeSeek = offset;
+            position += offset;
+            player.emitSignal("Seeked", position);
+        });
         EXPECT_TRUE(root.publish());
         EXPECT_TRUE(player.publish());
         EXPECT_TRUE(bus->requestName("org.mpris.MediaPlayer2." + name));
@@ -590,6 +595,7 @@ public:
     std::vector<std::string> calls;
     std::string soughtTrack;
     int64_t position = 0;
+    int64_t relativeSeek = 0;
 };
 
 } // namespace
@@ -607,12 +613,14 @@ TEST(MprisTest, ProjectsTheRealPositionAndSeeksTheCurrentTrack)
     auto *player = manager.current();
     EXPECT_EQ(player->position(), 12.);
     EXPECT_EQ(player->duration(), 120.);
+    EXPECT_EQ(player->processId(), uint32_t(getpid()));
     ASSERT_TRUE(player->canSetPosition());
 
     music.setStatus("Playing");
     ASSERT_TRUE(test::runUntil([&] { return player->position().value_or(0) > 12.; }));
     music.setStatus("Paused");
     ASSERT_TRUE(test::runUntil([&] { return player->playbackStatus() == shell::MprisPlayer::PlaybackStatus::Paused; }));
+    ASSERT_TRUE(test::runUntil([&] { return player->position() == 12.; }));
     const auto paused = player->position();
     test::runFor(std::chrono::milliseconds(20));
     EXPECT_EQ(player->position(), paused);
@@ -630,6 +638,39 @@ TEST(MprisTest, ProjectsTheRealPositionAndSeeksTheCurrentTrack)
     ASSERT_TRUE(test::runUntil([&] { return player->trackId().path == "/song/two"; }));
     EXPECT_FALSE(player->position().has_value());
     EXPECT_FALSE(player->canSetPosition());
+}
+
+TEST(MprisTest, RecognizesAStalledEndAndDoesNotSkipTheNextTrack)
+{
+    test::DBusTestClient client;
+    FakePlayer music(client.connection.get(), "TrackEnd");
+    music.metadata = {{"mpris:trackid", dbus::Variant(dbus::ObjectPath {"/song/one"})},
+                      {"mpris:length", dbus::Variant(int64_t(3000000))}};
+    music.position = 2000000;
+    music.status = "Playing";
+    shell::MprisManager manager(sessionBus());
+    ASSERT_TRUE(test::runUntil([&] { return manager.current() && manager.current()->isReady(); }));
+    auto *player = manager.current();
+    test::runFor(std::chrono::milliseconds(900));
+    EXPECT_FALSE(player->atEnd());
+    music.position = 2990000;
+    ASSERT_TRUE(test::runUntil([&] { return player->atEnd(); }));
+    EXPECT_EQ(player->position(), 3.);
+    EXPECT_TRUE(music.calls.empty());
+
+    // Gapless/repeat playback can wrap to the start without changing track ID.
+    music.position = 100000;
+    ASSERT_TRUE(test::runUntil([&] { return !player->atEnd() && player->position().value_or(3) < .3; }));
+    music.position = 1250000;
+    music.setStatus("Paused");
+    music.metadata.erase("mpris:trackid");
+    music.player.emitPropertiesChanged({"Metadata"});
+    ASSERT_TRUE(test::runUntil([&] { return player->trackId().path.empty() && player->position() == 1.25; }));
+    ASSERT_TRUE(player->canSetPosition());
+    player->setPosition(2.25);
+    ASSERT_TRUE(test::runUntil([&] { return music.relativeSeek != 0; }));
+    EXPECT_EQ(music.relativeSeek, 1000000);
+    EXPECT_EQ(music.position, 2250000);
 }
 
 TEST(MprisTest, ShowsThePlayerThatLastStartedPlaying)

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "shell/controlcenter/control_center_services.h"
+#include "shell/menubar/media_spectrum.h"
 #include "ui/icon.h"
 #include "ui/view.h"
 
@@ -127,20 +128,20 @@ private:
 class IconButton : public ui::View
 {
 public:
+    enum class Transport { Previous = -1, PlayPause = 0, Next = 1 };
     IconButton();
     ~IconButton() override;
 
-    void setFile(std::string file);
     // What the button sits on, for the ink of its plate.
     void setSurfaceColor(ui::Color color);
     void setGlyphSize(double size);
+    void setTransport(Transport transport, bool white, bool playing = false);
 
     std::function<void()> onClicked;
 
     bool acceptsPointer() const override { return true; }
 
 protected:
-    void layout() override;
     void paint(ui::Painter &painter) override;
     void hoverChanged() override;
     void enabledChanged() override;
@@ -150,18 +151,49 @@ protected:
 
 private:
     void animate();
-    void placeGlyphs();
-    SvgIcon *m_icon;
-    SvgIcon *m_outgoing;
-    std::string m_file;
+    void animateSkip();
     std::unique_ptr<ui::Animation> m_motion;
-    std::unique_ptr<ui::Animation> m_swap;
+    std::unique_ptr<ui::Animation> m_morphMotion;
+    std::unique_ptr<ui::Animation> m_skip;
     ui::Color m_surface;
+    ui::Color m_glyphInk;
+    Transport m_transport = Transport::PlayPause;
+    bool m_playing = false;
+    double m_morph = 0;
+    double m_skipProgress = 0;
     double m_size = 0;
     double m_press = 0;
     double m_ink = 0;
     bool m_pressed = false;
     bool m_inside = false;
+};
+
+class MediaCover final : public ui::View
+{
+public:
+    enum class Style { Legacy, Control, Activity };
+
+    explicit MediaCover(Style style = Style::Legacy);
+    ~MediaCover() override;
+    void setStyle(Style style);
+    void setUrl(const std::string &url);
+
+protected:
+    void layout() override;
+    void paint(ui::Painter &painter) override;
+
+private:
+    void animate();
+
+    Style m_style;
+    ui::ImageView *m_image;
+    bool m_ready = false;
+    bool m_loading = false;
+    double m_phase = 0;
+    std::string m_url;
+    std::shared_ptr<base::file::TemporaryFile> m_file;
+    std::shared_ptr<int> m_request;
+    std::unique_ptr<ui::Animation> m_animation;
 };
 
 // The media card, 60 tall. Always shown; without a
@@ -191,6 +223,7 @@ public:
     std::function<void()> pollPosition;
     std::function<void(double)> seek;
     void setTimeline(double duration, bool seekable, bool trackChanged);
+    void setBands(const MediaBands &bands);
 
     ui::SizeF sizeHint() const override { return {0, kHeight}; }
 
@@ -201,14 +234,11 @@ protected:
 private:
     class Progress;
     void updateArtwork();
-    void loadArtwork();
-    void animateArtwork();
     void updateTimeline();
     void animateTimeline();
 
     MediaState m_state;
-    SvgIcon *m_cover;
-    ui::ImageView *m_art;
+    MediaCover *m_cover;
     ui::Label *m_title;
     ui::Label *m_artist;
     IconButton *m_previous;
@@ -220,20 +250,12 @@ private:
     std::unique_ptr<ui::Animation> m_timeline;
     std::unique_ptr<ui::Animation> m_metadataMotion;
     double m_duration = 0;
-    double m_wavePhase = 0;
-    double m_waveEnergy = 0;
+    MediaBands m_bands {};
     std::chrono::steady_clock::time_point m_nextPoll;
-    bool m_artReady = false;
     bool m_controlStyle = false;
-    bool m_artLoading = false;
-    double m_artPhase = 0;
-    std::string m_artUrl;
-    std::shared_ptr<base::file::TemporaryFile> m_artFile;
-    std::shared_ptr<int> m_artRequest;
-    std::unique_ptr<ui::Animation> m_artAnimation;
 };
 
-void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, double phase, double energy);
+void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, const MediaBands &bands);
 void paintLiveMediaIcon(ui::Painter &painter, const ui::RectF &rect, double opacity = 1);
 
 // The applications behind the bar's privacy dot, with one compact row per app.
