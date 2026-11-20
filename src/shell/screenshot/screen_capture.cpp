@@ -26,6 +26,7 @@
 #include "shell/screenshot/screen_grabber.h"
 #include "shell/screenshot/screen_recording.h"
 #include "ui/bitmap_painter.h"
+#include "ui/design_metrics.h"
 #include "ui/file_chooser.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -444,7 +445,7 @@ ScreenCapture::Picked ScreenCapture::resolve(const base::Point &point) const
             picked.kind = PickedKind::Window;
             picked.geometry = task->geometry;
             // A window that fills its area has square corners.
-            picked.radius = task->maximized || task->fullscreen ? 0 : kWindowRadius;
+            picked.radius = task->maximized || task->fullscreen ? 0 : ui::design::windowRadius;
         }
         break;
     case wm::WindowRole::Dock:

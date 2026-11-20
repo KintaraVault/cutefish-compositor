@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <iterator>
 
+#include "ui/theme.h"
+
 namespace cutefish::decoration {
 
 namespace {
 
-constexpr int kRadius = 14; // Logical pixels, all four corners.
+constexpr int kRadius = ui::design::windowRadius;
 constexpr double kOutlineWidthPx = 1.0;
 
 constexpr render::Color kOutlineColor {0, 0, 0, 0.05f};
@@ -29,21 +31,8 @@ constexpr render::Color kDarkDockOutlineColor {0, 0, 0, 0.3f};
 constexpr render::Color kDarkDockHighlightColor {1, 1, 1, 0.2f};
 // Light enough that the blocked window still reads; ash's 0.5 is for whole
 // containers behind system modals.
-constexpr float kDimOpacity = 0.15f;
-constexpr float kDarkDimOpacity = 0.25f;
-
-// FishUI's ThemeManager accent palette, in the Appearance service's index order.
-constexpr render::Color kAccentColors[] = {
-    {51 / 255.f, 133 / 255.f, 255 / 255.f, 1}, // Blue
-    {255 / 255.f, 92 / 255.f, 109 / 255.f, 1}, // Red
-    {53 / 255.f, 191 / 255.f, 86 / 255.f, 1}, // Green
-    {130 / 255.f, 102 / 255.f, 255 / 255.f, 1}, // Purple
-    {202 / 255.f, 100 / 255.f, 172 / 255.f, 1}, // Pink
-    {254 / 255.f, 160 / 255.f, 66 / 255.f, 1}, // Orange
-    {79 / 255.f, 89 / 255.f, 107 / 255.f, 1}, // Grey
-    {191 / 255.f, 131 / 255.f, 0, 1}, // Yellow
-    {101 / 255.f, 118 / 255.f, 189 / 255.f, 1}, // Indigo
-};
+constexpr float kDimOpacity = 0.20f;
+constexpr float kDarkDimOpacity = 0.32f;
 
 // Ash's phantom window: kColorAshPhantomWindowBackgroundColor is the primary
 // colour at kAlpha25, edged by views::HighlightBorder's kHighlightBorderNoShadow
@@ -52,13 +41,6 @@ constexpr float kSnapPreviewFillAlpha = 0x40 / 255.f;
 constexpr render::Color kSnapPreviewOutline {0, 0, 0, 0x14 / 255.f};
 constexpr render::Color kSnapPreviewHighlight {1, 1, 1, 0x28 / 255.f};
 constexpr render::Color kDarkSnapPreviewHighlight {1, 1, 1, 0x0F / 255.f};
-
-render::Color accentColor(int index)
-{
-    if (index < 0 || index >= int(std::size(kAccentColors)))
-        index = 0;
-    return kAccentColors[index];
-}
 
 } // namespace
 
@@ -75,8 +57,8 @@ WindowVisualStyle::WindowVisualStyle(bool dark, int accentIndex)
     , snapPreviewOutline(kSnapPreviewOutline)
     , snapPreviewHighlight(dark ? kDarkSnapPreviewHighlight : kSnapPreviewHighlight)
 {
-    snapPreviewFill = accentColor(accentIndex);
-    snapPreviewFill.a = kSnapPreviewFillAlpha;
+    const auto accent = ui::accent::forMode(accentIndex, dark);
+    snapPreviewFill = {accent.r / 255.f, accent.g / 255.f, accent.b / 255.f, kSnapPreviewFillAlpha};
 }
 
 int WindowVisualStyle::radiusFor(const base::Size &size)

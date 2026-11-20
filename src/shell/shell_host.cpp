@@ -129,11 +129,16 @@ void ShellHost::blurChanged(ui::EmbeddedWindow *window)
     // masked by their bubble.
     const bool dark = ui::Theme::current().darkMode;
     m_glassDark[window] = dark;
+    auto material = dark ? popupGlass(.14, .14, .15, ui::design::menuTintDark)
+                         : popupGlass(1, 1, 1, ui::design::menuTintLight);
+    material.blurSigma = glassFixed(10);
+    material.displacement = glassFixed(10);
+    material.chroma = 0;
+    material.saturation = glassFixed(dark ? 1.2 : 1.4);
     shellWindow->setBackgroundBlur(base::Rect(left, top, int(std::lround(rect.x + rect.width)) - left,
                                               int(std::lround(rect.y + rect.height)) - top),
                                    int(std::lround(window->blurRadius())),
-                                   dark ? popupGlass(0.17, 0.17, 0.19, 0.6) : popupGlass(1, 1, 1, 0.6),
-                                   window->blurShape());
+                                   material, window->blurShape());
 }
 
 bool ShellHost::startDrag(ui::EmbeddedWindow *window, ui::DragSource source)

@@ -40,7 +40,8 @@ ui::Color secondaryTextColor()
 
 render::GlassParams panelGlass()
 {
-    return dark() ? popupGlass(0.17, 0.17, 0.19, 0.6) : popupGlass(1, 1, 1, 0.6);
+    return dark() ? popupGlass(.14, .14, .15, ui::design::menuTintDark)
+                  : popupGlass(1, 1, 1, ui::design::menuTintLight);
 }
 
 ui::Color statusSurfaceColor()

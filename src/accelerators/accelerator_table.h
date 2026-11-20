@@ -49,6 +49,7 @@ struct AcceleratorData {
 inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
         {false, XKB_KEY_Super_L, NoModifier, AcceleratorAction::ToggleAppList},
         {true, XKB_KEY_space, MetaDown, AcceleratorAction::ToggleSpotlight},
+        {true, XKB_KEY_Escape, MetaDown | AltDown, AcceleratorAction::ShowForceQuit},
         {true, XKB_KEY_l, MetaDown, AcceleratorAction::LockScreen},
 
         // Window management.
@@ -126,6 +127,7 @@ inline constexpr auto kAcceleratorData = std::to_array<AcceleratorData>({
 // Control. The launchpad has no default.
 inline constexpr auto kCommandAcceleratorData = std::to_array<AcceleratorData>({
         {true, XKB_KEY_space, MetaDown, AcceleratorAction::ToggleSpotlight},
+        {true, XKB_KEY_Escape, MetaDown | AltDown, AcceleratorAction::ShowForceQuit},
         {true, XKB_KEY_q, ControlDown | MetaDown, AcceleratorAction::LockScreen},
 
         // Window management.

@@ -1929,10 +1929,19 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     const auto reply = proxy.call("accelerators");
     ASSERT_FALSE(reply.isError()) << reply.error().message;
     const base::json::Value actions = parse(reply.value<std::string>().value_or(""))["actions"];
-    EXPECT_EQ(52u, actions.size());
+    EXPECT_EQ(53u, actions.size());
     bool sawMaximize = false;
     bool sawOverview = false;
+    bool sawForceQuit = false;
     for (const base::json::Value &action : actions.toArray()) {
+        if (action["name"].toString() == "show-force-quit") {
+            sawForceQuit = true;
+            const auto &defaults = action["defaults"];
+            ASSERT_EQ(1u, defaults.size());
+            EXPECT_EQ(XKB_KEY_Escape, defaults[0]["keysym"].toInt());
+            EXPECT_EQ(int(MetaDown | AltDown), defaults[0]["modifiers"].toInt());
+            continue;
+        }
         if (action["name"].toString() == "toggle-overview") {
             // Meta+Tab and the dedicated key.
             sawOverview = true;
@@ -1969,6 +1978,7 @@ TEST_F(AcceleratorTest, ServiceListsActionsWithTheirDefaultsOverTheBus)
     }
     EXPECT_TRUE(sawMaximize);
     EXPECT_TRUE(sawOverview);
+    EXPECT_TRUE(sawForceQuit);
 
     const auto added = proxy.call("addAccelerator", std::string("lock-screen"),
                                   uint32_t(KEY_ESC), uint32_t(0), uint32_t(MetaDown));

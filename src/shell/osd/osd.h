@@ -11,6 +11,7 @@
 #include "base/signal.h"
 #include "base/timer.h"
 #include "shell/shell.h"
+#include "ui/design_metrics.h"
 
 namespace cutefish::base::dbus {
 class Object;
@@ -80,7 +81,7 @@ public:
     // PanelStyle.popupMargin: the gap below the menu bar.
     static constexpr int kTopMargin = 6;
     // FishUI's bigRadius * 1.5.
-    static constexpr double kRadius = 18;
+    static constexpr double kRadius = ui::design::popoverRadius;
     static constexpr std::chrono::milliseconds kHideDelay {1500};
     // How long a requested value stands for the reported one.
     static constexpr std::chrono::milliseconds kSettle {500};

@@ -24,6 +24,8 @@
 #include "shell/widgets/widget_weather.h"
 #include "ui/animation.h"
 #include "ui/button.h"
+#include "ui/color_provider.h"
+#include "ui/design_metrics.h"
 #include "ui/embedded_window.h"
 #include "ui/geometry_conversions.h"
 #include "ui/image.h"
@@ -75,7 +77,7 @@ render::GlassParams galleryGlass()
 void applyWidgetGlass(ShellWindow &window, base::Size size, ui::RectF body = {}, float opacity = 1)
 {
     auto glass = popupGlass(0, 0, 0, 0);
-    glass.blurSigma = 4;
+    glass.blurSigma = 7;
     glass.displacement = 5.4f;
     glass.chroma = 0;
     if (body.width <= 0 || body.height <= 0)
@@ -937,7 +939,7 @@ protected:
         m_search->setGlyphColor(ui::ColorRecipe(palette.muted));
         m_search->setTextColor(ui::ColorRecipe(palette.ink));
         m_search->setPlaceholderColor(ui::ColorRecipe(palette.muted));
-        m_search->setGeometry({20, 20, sidebar() - 40, 32});
+        m_search->setGeometry({20, 20, sidebar() - 40, ui::design::compactControlHeight});
         syncGlass();
     }
 
@@ -957,7 +959,7 @@ protected:
         painter.clip(sidebarClip());
         auto all = kindRect(0);
         if (m_all || contains(all, m_hover))
-            painter.fillRoundedRect(all, 10, ink(m_all ? .20 : .09));
+            painter.drawSmoothRectangle(all, ui::design::menuItemRadius, ink(m_all ? .16 : .08));
         for (int i = 0; i < 4; ++i)
             painter.fillRoundedRect({all.x + 14 + i % 2 * 8., all.y + 16 + i / 2 * 8., 5, 5}, 2.5, ink());
         text(painter, {all.x + 49, all.y, all.width - 55, all.height}, tr("All Widgets"), 11, ink());
@@ -966,7 +968,7 @@ protected:
             const auto row = kindRect(i + 1);
             const bool selected = !m_all && m_kind == kind;
             if (selected || contains(row, m_hover))
-                painter.fillRoundedRect(row, 10, ink(selected ? .20 : .09));
+                painter.drawSmoothRectangle(row, ui::design::menuItemRadius, ink(selected ? .16 : .08));
             const ui::RectF badge {row.x + 11, row.y + 8, 29, 29};
             painter.fillRoundedRect(badge, 6, palette.raised.withAlpha(.65));
             const auto c = center(badge);
@@ -1017,7 +1019,8 @@ protected:
         text(painter, {23, height - 56, width - 156, 52},
              tr("Drag a widget onto the desktop or into Notification Center."), 11, palette.ink, true);
         const auto r = doneRect();
-        painter.fillRoundedRect(r, r.height / 2, ui::Color::rgb(0x087ff6).withAlpha(contains(r, m_hover) ? 1 : .92));
+        painter.fillRoundedRect(r, r.height / 2,
+                                ui::color(ui::ColorId::MenuHighlight).withAlpha(contains(r, m_hover) ? 1 : .92));
         text(painter, r, tr("Done"), 11, ui::Color::rgb(0xffffff), true, true);
         painter.restore();
     }

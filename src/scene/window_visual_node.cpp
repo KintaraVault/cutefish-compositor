@@ -121,8 +121,14 @@ void WindowVisualNode::render(render::Renderer &renderer) const
         renderer.pushRoundedClip(shape);
     Node::render(renderer);
     if (const float dim = presentedDim(renderer);
-        dim > 0 && renderer.drawsInto(shape.bounds.toEnclosingRect()))
+        dim > 0 && renderer.drawsInto(shape.bounds.toEnclosingRect())) {
+        const bool clipDim = !clip && shape.radius > 0;
+        if (clipDim)
+            renderer.pushRoundedClip(shape);
         renderer.fillRectF(shape.bounds, {0, 0, 0, dim});
+        if (clipDim)
+            renderer.popRoundedClip();
+    }
     if (clip)
         renderer.popRoundedClip();
     if (m_state.drawOutline && !renderer.suppressWindowOutlines && !m_state.outlinePath.isEmpty()) {

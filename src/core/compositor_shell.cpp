@@ -832,6 +832,7 @@ void CompositorShell::initShell()
         m_acceleratorDelegate->launchpadToggle = [spotlight] { spotlight->toggle(shell::Spotlight::Mode::Applications); };
         m_acceleratorDelegate->spotlightToggle = [spotlight] { spotlight->toggle(shell::Spotlight::Mode::Search); };
         m_acceleratorDelegate->clipboardToggle = [spotlight] { spotlight->toggle(shell::Spotlight::Mode::Clipboard); };
+        m_acceleratorDelegate->forceQuitShow = [this] { if (m_shell) m_shell->showForceQuit(); };
     }
     auto menuBar = std::make_unique<shell::MenuBar>(
             environment.bus, environment.bus ? base::dbus::Connection::system(mainLoop()) : nullptr,

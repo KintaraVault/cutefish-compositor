@@ -45,6 +45,7 @@
 #include "shell_test_util.h"
 #include "shm_test_util.h"
 #include "temporary_directory.h"
+#include "ui/design_metrics.h"
 #include "ui/label.h"
 #include "ui/menu.h"
 #include "wm/shell_surface.h"
@@ -278,7 +279,7 @@ TEST_F(ScreenshotTest, CaptureModeCoversTheOutputWithTheToolbarAndASelection)
     // The compositor's glass under the toolbar, 18 round.
     const compositor::Surface *surface = window->surface();
     EXPECT_TRUE(surface->glass().enabled);
-    EXPECT_EQ(18, surface->backgroundBlurRadius());
+    EXPECT_EQ(ui::design::popoverRadius, surface->backgroundBlurRadius());
     EXPECT_EQ(int(std::lround(toolbar.y())), surface->backgroundBlurRect().y());
 
     // The same shortcut closes it again, keeping the selection.
@@ -429,7 +430,7 @@ TEST_F(ScreenshotTest, TheCrosshairCapturesOnRelease)
     move(500, 400);
     EXPECT_EQ(shell::CaptureOverlay::Shape::Camera, overlay()->shape());
     EXPECT_EQ(base::Rect(400, 300, 300, 200), capture->hoveredWindow());
-    EXPECT_EQ(14, capture->hoveredWindowRadius());
+    EXPECT_EQ(ui::design::windowRadius, capture->hoveredWindowRadius());
     ASSERT_TRUE(overlay()->window()->cursor());
     EXPECT_FALSE(overlay()->window()->cursor()->image.isNull());
     saved.clear();

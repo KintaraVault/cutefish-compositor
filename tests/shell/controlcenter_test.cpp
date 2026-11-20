@@ -55,6 +55,7 @@
 #include "shell_test_util.h"
 #include "temporary_directory.h"
 #include "ui/application.h"
+#include "ui/design_metrics.h"
 #include "ui/bitmap.h"
 #include "ui/dialog_window.h"
 #include "ui/embedded_window.h"
@@ -515,6 +516,18 @@ TEST_F(ControlCenterTest, OffscreenReferenceFrames)
     capture("-widget-gallery");
     widgets->done();
     notifications->centre().close();
+    {
+        const auto appearance = ui::Theme::current();
+        ui::Theme::setCurrent(ui::Theme::dark());
+        test::runFor(std::chrono::milliseconds(400));
+        capture("-widgets-dark");
+        widgets->edit();
+        capture("-warmup");
+        test::runFor(std::chrono::milliseconds(450));
+        capture("-widget-gallery-dark");
+        widgets->done();
+        ui::Theme::setCurrent(appearance);
+    }
     cleanup();
 }
 
@@ -544,7 +557,7 @@ TEST_F(ControlCenterTest, TheControlCentreHangsBelowTheBarWithThePanelGlass)
     EXPECT_GT(glass.underlay.opacity, 0);
     EXPECT_TRUE(glass.underlay.bounds.contains({width / 2., 30}));
     EXPECT_EQ(base::Rect(0, 0, width, bounds.height()), window->surface()->backgroundBlurRect());
-    EXPECT_EQ(16, window->surface()->backgroundBlurRadius());
+    EXPECT_EQ(ui::design::popoverRadius, window->surface()->backgroundBlurRadius());
     const auto mask = window->surface()->backgroundBlurShape();
     EXPECT_TRUE(mask.contains({40, 30}));
     EXPECT_FALSE(mask.contains({width / 2., 30})); // no enclosing glass in the grid gutter
@@ -1055,7 +1068,7 @@ TEST_F(ControlCenterTest, TheBarIndicatorsFollowTheServices)
     EXPECT_EQ(1, changes);
 }
 
-TEST_F(ControlCenterTest, ThePowerDialogConfirmsWithReturnAndCancelsWithEscape)
+TEST_F(ControlCenterTest, ThePowerDialogConfirmsFromItsConfirmButton)
 {
     shell::PowerDialog dialog(shell.get());
     int accepted = 0;
@@ -1069,10 +1082,11 @@ TEST_F(ControlCenterTest, ThePowerDialogConfirmsWithReturnAndCancelsWithEscape)
     ASSERT_NE(nullptr, window);
     EXPECT_EQ(wm::WindowRole::Normal, window->role());
     EXPECT_TRUE(window->isAlwaysOnTop());
-    EXPECT_EQ(336, window->bounds().width());
+    EXPECT_EQ(260, window->bounds().width());
     // Asking again changes what it asks.
     dialog.open(shell::PowerDialog::Action::Reboot);
     EXPECT_EQ(shell::PowerDialog::Action::Reboot, dialog.action());
+    key(KEY_TAB);
     key(KEY_ENTER);
     test::runFor(std::chrono::milliseconds(5));
     EXPECT_EQ(1, accepted);

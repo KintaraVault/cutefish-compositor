@@ -764,3 +764,20 @@ msgstr "Снимок или запись экрана, окна или выбр�
 #: data/cutefish-screenshot.desktop
 msgid "screenshot;screen recording;capture;record;"
 msgstr "снимок экрана;скриншот;запись экрана;снимок;запись;screenshot;"
+msgid "Force Quit Applications"
+msgstr "Принудительное завершение приложений"
+
+msgid "Force Quit…"
+msgstr "Завершить принудительно…"
+
+msgid "Force quit “{app}”? Unsaved changes will be lost."
+msgstr "Завершить «{app}» принудительно? Несохранённые изменения будут потеряны."
+
+msgid "There are no applications to force quit."
+msgstr "Нет приложений для принудительного завершения."
+
+msgid "If an application isn't responding, select it and click Force Quit."
+msgstr "Если приложение не отвечает, выберите его и нажмите «Завершить принудительно»."
+
+msgid "{app} (Not Responding)"
+msgstr "{app} (не отвечает)"

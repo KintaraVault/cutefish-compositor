@@ -462,7 +462,7 @@ double DockWindow::cornerRadius() const
     // From the panel as drawn, which is between two sizes while it resizes.
     const bool bottom = m_dock->settings().direction() == DockSettings::Bottom;
     const double thickness = bottom ? m_restPanelRect.height() : m_restPanelRect.width();
-    return (thickness > 0 ? thickness : m_metrics.thickness()) * 28.0 / 86.0;
+    return (thickness > 0 ? thickness : m_metrics.thickness()) * 15.0 / 58.0;
 }
 
 base::Rect DockWindow::windowRect(int thickness) const

@@ -100,7 +100,7 @@ protected:
     void pointerRelease(const ui::PointerEvent &) override { m_pressed = false; }
 
 private:
-    // FishUI's dialog column: margins 16, spacing 16, the text
+    // The dialog column: margins 20, spacing 16, the text
     // column (title, 4, body), the rows, the buttons at the right. Returns
     // the height; places the views when `apply`.
     double arrange(bool apply)
@@ -187,7 +187,7 @@ void SecretDialog::open()
 {
     if (!m_window) {
         m_window = std::make_unique<ShellWindow>(m_shell, wm::WindowRole::Normal);
-        m_window->setDialog(true);
+        m_window->setDialog();
         m_window->setProtectedFromControl(true);
         auto frame = std::make_unique<Frame>(this);
         m_frame = frame.get();

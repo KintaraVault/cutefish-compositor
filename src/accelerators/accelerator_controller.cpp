@@ -9,6 +9,7 @@
 // compositor types and ownership.
 
 #include "accelerators/accelerator_controller.h"
+#include "accelerators/accelerator_delegate.h"
 
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -201,6 +202,7 @@ bool AcceleratorController::canPerformAction(AcceleratorAction action,
     case AcceleratorAction::StopScreenRecording:
     case AcceleratorAction::ToggleClipboardHistory:
     case AcceleratorAction::ToggleSpotlight:
+    case AcceleratorAction::ShowForceQuit:
     case AcceleratorAction::MediaPlayPause:
     case AcceleratorAction::MediaPause:
     case AcceleratorAction::MediaPrevious:
@@ -322,6 +324,9 @@ void AcceleratorController::performAction(AcceleratorAction action, const Accele
         break;
     case AcceleratorAction::ToggleSpotlight:
         commands::toggleSpotlight(m_context);
+        break;
+    case AcceleratorAction::ShowForceQuit:
+        m_context.delegate->showForceQuit();
         break;
     case AcceleratorAction::MediaPlayPause:
         commands::mediaPlayPause(m_context);

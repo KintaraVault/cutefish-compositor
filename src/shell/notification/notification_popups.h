@@ -14,6 +14,7 @@
 #include "base/signal.h"
 #include "base/timer.h"
 #include "shell/notification/notification.h"
+#include "ui/design_metrics.h"
 
 namespace cutefish::shell {
 
@@ -24,7 +25,7 @@ class ShellWindow;
 class Tween;
 
 // The banners: one
-// window of role Notification per banner, 380 wide on PopupGlass, stacked
+// window of role Notification per banner, stacked
 // newest first down the primary output's top right corner, 6 from its
 // work area's edges and 9 apart, taking at most 60 % of its height (the
 // first always shows). Each times out after its notification's timeout (at
@@ -33,12 +34,12 @@ class Tween;
 class NotificationPopups
 {
 public:
-    static constexpr int kWidth = 380;
+    static constexpr int kWidth = ui::design::bannerWidth;
     // PanelStyle.popupMargin and FishUI's smallSpacing * 1.5.
     static constexpr int kEdgeDistance = 6;
     static constexpr int kSpacing = 9;
     static constexpr double kMaximumScreenFill = 0.6;
-    static constexpr double kRadius = 18;
+    static constexpr double kRadius = ui::design::bannerRadius;
     static constexpr std::chrono::milliseconds kDefaultTimeout {7000};
     static constexpr std::chrono::milliseconds kMinimumTimeout {3000};
 

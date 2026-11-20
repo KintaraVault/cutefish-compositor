@@ -11,6 +11,7 @@
 #include "shell/shell_data.h"
 #include "shell/shell_window.h"
 #include "shell/spotlight/spotlight_view.h"
+#include "ui/design_metrics.h"
 #include "ui/embedded_window.h"
 #include "ui/theme.h"
 #include "wm/window_manager.h"
@@ -273,8 +274,11 @@ void Spotlight::applyGlass()
     if (!m_closing && shapeChanged)
         m_window->setInputRegion(m_view->inputRegion(size.width(), size.height()));
     // FishUI PopupGlass. Neutral tint; the hue of the backdrop is not baked into the panel.
-    auto glass = dark ? popupGlass(0.10, 0.10, 0.10, 0.70) : popupGlass(1, 1, 1, 0.66);
-    glass.blurSigma = glassFixed(8);
+    auto glass = dark ? popupGlass(.14, .14, .15, ui::design::menuTintDark)
+                      : popupGlass(1, 1, 1, ui::design::menuTintLight);
+    glass.blurSigma = glassFixed(12);
+    glass.displacement = glassFixed(8);
+    glass.chroma = 0;
     glass.opacity = float(m_opacity);
     m_window->setBackgroundBlur(bounds, 24, glass, shape);
 }

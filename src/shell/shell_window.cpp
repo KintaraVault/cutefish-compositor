@@ -18,7 +18,9 @@
 #include "shell/shell_input.h"
 #include "shell/window_renderer.h"
 #include "toolkit/toolkit_host.h"
+#include "ui/bubble_shape.h"
 #include "ui/embedded_window.h"
+#include "ui/theme.h"
 #include "ui/view.h"
 #include "wayland/protocols/xdg_positioner.h"
 #include "wm/shell_surface.h"
@@ -241,12 +243,13 @@ void ShellWindow::setEdgeReach(int reach)
     applyMetadata();
 }
 
-void ShellWindow::setDialog(bool dialog)
+void ShellWindow::setDialog()
 {
-    if (dialog == m_dialog || isPopup())
+    if (m_dialog || isPopup())
         return;
-    m_dialog = dialog;
-    m_surface->setSkipTaskbar(dialog);
+    m_dialog = true;
+    m_surface->setSkipTaskbar(true);
+    m_window->setDialogAppearance();
     updateSizeLimits();
     if (m_shown)
         commit();
@@ -501,6 +504,12 @@ void ShellWindow::produceFrame(render::Renderer &renderer, uint64_t frameTimeNs)
             m_surface->damageBuffer(rect);
     }
     m_surface->setViewport(m_size);
+    if (m_dialog) {
+        const ui::BubbleShape shape {.width = double(m_size.width()), .height = double(m_size.height()),
+                                     .radius = ui::design::dialogRadius,
+                                     .continuousCorners = ui::Theme::current().continuousCorners};
+        m_surface->setBodyShape(shape.path());
+    }
     m_surface->commit();
     observeWindow();
     if (onFrameProduced)

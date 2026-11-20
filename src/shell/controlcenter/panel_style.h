@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include "render/glass.h"
+#include "ui/design_metrics.h"
 #include "ui/geometry.h"
 
 namespace cutefish::ui {
@@ -24,7 +25,7 @@ namespace cutefish::shell::panel {
 // screen edge.
 inline constexpr double kPopupMargin = 6;
 // Every panel's window radius, the control centre's too.
-inline constexpr double kPanelRadius = 16;
+inline constexpr double kPanelRadius = ui::design::popoverRadius;
 // The control centre's tiles. Concentric with the window across their 10 px
 // inset would leave 6, too tight against the round plates and pills inside.
 inline constexpr double kTileRadius = 12;

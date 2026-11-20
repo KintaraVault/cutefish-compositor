@@ -20,6 +20,7 @@
 #include "shell/common/file_thread.h"
 #include "shell/common/task_manager.h"
 #include "shell/common/wm_task_windows.h"
+#include "shell/force_quit_dialog.h"
 #include "shell/shell_host.h"
 #include "shell/shell_input.h"
 #include "shell/window_renderer.h"
@@ -31,6 +32,13 @@
 #include "wm/window_manager.h"
 
 namespace cutefish::shell {
+
+void Shell::showForceQuit()
+{
+    if (!m_forceQuit)
+        m_forceQuit = std::make_unique<ForceQuitDialog>(this);
+    m_forceQuit->show();
+}
 
 // FishUI's Theme: dark mode and accent from the
 // Appearance service, as the compositor's own theme follows them, and the
@@ -95,7 +103,7 @@ private:
         const bool dark = m_theme && m_theme->darkMode();
         ui::Theme theme = dark ? ui::Theme::dark() : ui::Theme::light();
         const int accent = m_theme ? m_theme->accentColor() : 0;
-        theme.highlight = ui::accent::fromIndex(accent);
+        theme.highlight = ui::accent::forMode(accent, dark);
         theme.iconTheme = m_iconTheme;
         theme.fontFamily = m_fontFamily;
         theme.fontPointSize = m_fontPointSize > 0 ? m_fontPointSize : 9;
@@ -149,6 +157,7 @@ Shell::~Shell()
     // client and the renderer.
     while (!m_components.empty())
         m_components.pop_back();
+    m_forceQuit.reset();
     m_outputsChanged.reset();
     m_languageChanged.reset();
     m_badges.reset();

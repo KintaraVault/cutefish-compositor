@@ -19,6 +19,7 @@
 #include "loop_test_util.h"
 #include "scene/node.h"
 #include "scene/scene.h"
+#include "shell/force_quit_dialog.h"
 #include "shell/notresponding/not_responding_sheets.h"
 #include "shell/shell.h"
 #include "shell/shell_window.h"
@@ -26,6 +27,10 @@
 #include "shm_test_util.h"
 #include "temporary_directory.h"
 #include "ui/dialog_window.h"
+#include "ui/embedded_window.h"
+#include "ui/list_view.h"
+#include "ui/theme.h"
+#include "ui/window_header.h"
 #include "wm/activation.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -198,6 +203,70 @@ TEST_F(NotRespondingTest, ForceQuitEndsTheApplication)
     EXPECT_EQ(0u, sheets->sheetCount());
     EXPECT_FALSE(sheets->isWaiting(kPid));
     // The closed sheet goes on the next loop turn.
+    test::runFor(std::chrono::milliseconds(10));
+}
+
+TEST_F(NotRespondingTest, ForceQuitListRequiresExplicitConfirmationAndGroupsWindows)
+{
+    openApplication(base::Rect(100, 100, 500, 400))->setResponsive(false);
+    openApplication(base::Rect(700, 300, 600, 500));
+    shell::ForceQuitDialog dialog(shell.get());
+    dialog.show();
+    frame();
+    auto *window = dialog.window()->window();
+    auto named = [](auto &&self, ui::View *view, const char *name) -> ui::View * {
+        if (view->name() == name)
+            return view;
+        for (const auto &child : view->children()) {
+            if (auto *found = self(self, child.get(), name))
+                return found;
+        }
+        return nullptr;
+    };
+    auto *list = dynamic_cast<ui::ListView *>(named(named, window->contentView(), "forceQuitApplications"));
+    auto *quit = dynamic_cast<ui::DialogButton *>(named(named, window->contentView(), "forceQuitAction"));
+    ASSERT_NE(nullptr, list);
+    ASSERT_NE(nullptr, quit);
+    EXPECT_EQ(1u, list->rowCount());
+    EXPECT_FALSE(quit->isEnabled());
+    key(KEY_DOWN);
+    ASSERT_TRUE(quit->isEnabled());
+    if (const char *out = std::getenv("CUTEFISH_FORCE_QUIT_PREVIEW")) {
+        const auto theme = ui::Theme::current();
+        EXPECT_TRUE(window->grab().savePng(std::string(out) + "-light.png"));
+        ui::Theme::setCurrent(ui::Theme::dark());
+        EXPECT_TRUE(window->grab().savePng(std::string(out) + "-dark.png"));
+        ui::Theme::setCurrent(theme);
+    }
+    quit->onClicked();
+    EXPECT_EQ(0, kills);
+    key(KEY_ESC);
+    EXPECT_EQ(0, kills);
+    quit->onClicked();
+    quit->onClicked();
+    EXPECT_EQ(1, kills);
+    EXPECT_EQ(std::vector<int64_t>{kPid}, ended);
+    dialog.close();
+    test::runFor(std::chrono::milliseconds(10));
+}
+
+TEST_F(NotRespondingTest, ForceQuitCloseIsInTheWindowCorner)
+{
+    shell::ForceQuitDialog dialog(shell.get());
+    dialog.show();
+    frame();
+    ASSERT_TRUE(dialog.window());
+    auto *window = dialog.window()->window();
+    window->updateLayout();
+    auto *header = dynamic_cast<ui::WindowHeader *>(window->contentView()->children().front().get());
+    ASSERT_TRUE(header);
+    constexpr auto inset = ui::window_controls::kDialogCloseInset;
+    constexpr auto half = ui::window_controls::kButton / 2;
+    EXPECT_EQ(header->mapToWindow({0, header->buttonsTop()}), (ui::PointF{0, inset}));
+    const auto bounds = dialog.window()->drawnBounds();
+    click(bounds.x() + inset + half, bounds.y() + inset + half);
+    EXPECT_EQ(nullptr, dialog.window());
+    EXPECT_EQ(0, kills);
     test::runFor(std::chrono::milliseconds(10));
 }
 

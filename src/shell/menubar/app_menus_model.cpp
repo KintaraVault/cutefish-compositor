@@ -99,6 +99,7 @@ void AppMenusModel::buildUserMenu()
     Shell *shell = m_shell;
     menu.addItem(tr("About"), [shell] { shell->openSettings({"-m", "about"}); });
     menu.addItem(tr("Settings"), [shell] { shell->openSettings(); });
+    menu.addItem(tr("Force Quit…"), [shell] { shell->showForceQuit(); }, "Super+Alt+Esc");
     menu.addSeparator();
     PowerActions *power = m_power;
     menu.addItem(tr("Suspend"), [power] {

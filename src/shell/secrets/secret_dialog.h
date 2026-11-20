@@ -56,7 +56,7 @@ public:
 
     // The frame's fixed width and margins (FishUI's dialog metrics).
     static constexpr double kWidth = 360;
-    static constexpr double kMargin = 16;
+    static constexpr double kMargin = 20;
     static constexpr double kSpacing = 16;
     static constexpr double kTextSize = 14;
     static constexpr double kBodyLineHeight = 20;

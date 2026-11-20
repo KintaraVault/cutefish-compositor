@@ -285,7 +285,7 @@ TEST_F(ShellComponentsTest, TheOsdShowsTopCentreBelowTheBarAndGoes)
     EXPECT_EQ(shell::shellDataFile("audio-volume-medium-symbolic.svg"), osd->track()->icon());
     EXPECT_TRUE(osd->window()->surface()->glass().enabled);
     EXPECT_EQ(base::Rect(0, 0, 280, 54), osd->window()->surface()->backgroundBlurRect());
-    EXPECT_EQ(18, osd->window()->surface()->backgroundBlurRadius());
+    EXPECT_EQ(ui::design::popoverRadius, osd->window()->surface()->backgroundBlurRadius());
     frame();
 
     // Muted shows at zero with the muted icon; down while muted only shows.
@@ -427,7 +427,7 @@ TEST_F(ShellComponentsTest, TheDockSitsAlongTheBottomOnItsGlassAndReservesItsStr
     // The glass: the default tint's values, rounded to 16 bits, then wl_fixed.
     const compositor::Surface *surface = dock->window()->surface();
     EXPECT_EQ(panel, surface->backgroundBlurRect());
-    EXPECT_EQ(28, surface->backgroundBlurRadius());
+    EXPECT_EQ(22, surface->backgroundBlurRadius());
     const render::GlassParams glass = surface->glass();
     EXPECT_TRUE(glass.enabled);
     EXPECT_FLOAT_EQ(1.0f, glass.blurSigma);

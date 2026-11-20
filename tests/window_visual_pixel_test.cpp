@@ -328,7 +328,7 @@ TEST_F(WindowVisualPixelTest, ResizeGeometryAndBufferCommitsKeepRoundedCorners)
                 const auto state = wm::WindowVisualController::evaluate(*window);
                 const auto *visual = static_cast<scene::WindowVisualNode *>(window->visualNode());
                 EXPECT_EQ(visual->state().shape.bounds, state.shape.bounds);
-                EXPECT_EQ(visual->state().shape.radius, 14);
+                EXPECT_EQ(visual->state().shape.radius, 16);
                 const auto bounds =
                         state.shape.bounds.translated(window->bounds().topLeft()).toEnclosingRect();
                 const auto image = pixels();

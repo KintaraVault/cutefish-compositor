@@ -8,6 +8,7 @@
 
 #include "compositor/surface.h"
 #include "decoration/window_visual_style.h"
+#include "ui/design_metrics.h"
 #include "ui/geometry_conversions.h"
 #include "wm/window.h"
 #include "wm/window_manager.h"
@@ -87,6 +88,15 @@ WindowVisualController::evaluate(const Window &window, const decoration::WindowV
         const base::Point origin = state.surfaceOrigin;
         state.outlinePath = root->bodyShape().translated(origin.x(), origin.y());
         state.outlineShape = {ui::toBase(state.outlinePath.boundingRect()), 0};
+        // Client-drawn dialogs keep their own outline. Dim the body, not the
+        // transparent pixels at its corners, if another modal is on top.
+        if (window.isModal() || window.skipTaskbar()) {
+            state.shape.bounds = state.outlineShape.bounds;
+            state.shape.radius = std::min({double(ui::design::dialogRadius), state.shape.bounds.width() / 2,
+                                           state.shape.bounds.height() / 2});
+            if (modalTransient(&window) || !window.isResponsive())
+                state.dimOpacity = style.dimOpacity;
+        }
         return state;
     }
     if (window.isDecorated())

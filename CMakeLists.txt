@@ -925,6 +925,7 @@ target_link_libraries(cutefish-switcher PUBLIC cutefish-wm cutefish-decoration c
 # and rendering, and the components built on them.
 add_library(cutefish-shell STATIC
     src/shell/shell.cpp src/shell/shell.h
+    src/shell/force_quit_dialog.cpp src/shell/force_quit_dialog.h
     src/shell/shell_data.cpp src/shell/shell_data.h
     src/shell/shell_drag.cpp src/shell/shell_drag.h
     src/shell/shell_host.cpp src/shell/shell_host.h

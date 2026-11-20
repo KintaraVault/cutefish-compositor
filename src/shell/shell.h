@@ -47,6 +47,7 @@ namespace cutefish::shell {
 class ApplicationBadges;
 class ApplicationLauncher;
 class Applications;
+class ForceQuitDialog;
 class ShellHost;
 class ShellInput;
 class TaskManager;
@@ -151,6 +152,7 @@ public:
     // Starts Settings with `arguments`, such as {"-m", "sound"}, and brings a
     // running Settings forward, minimized or hidden as it may be.
     void openSettings(const std::vector<std::string> &arguments = {});
+    void showForceQuit();
     // Tests hand in their own before the first use.
     void setApplications(std::unique_ptr<Applications> applications);
     void setTaskWindows(std::unique_ptr<TaskWindows> windows);
@@ -194,6 +196,7 @@ private:
     base::Subscription m_outputsChanged;
     base::Subscription m_languageChanged;
     base::Timer m_trimTimer;
+    std::unique_ptr<ForceQuitDialog> m_forceQuit;
     // Last: the first to go.
     std::vector<std::unique_ptr<Component>> m_components;
 };

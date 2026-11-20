@@ -18,6 +18,7 @@
 #include "cutefish/accounts/account_picture.h"
 #include "ui/animation.h"
 #include "ui/application.h"
+#include "ui/design_metrics.h"
 #include "ui/image_view.h"
 #include "ui/label.h"
 #include "ui/painter.h"
@@ -735,7 +736,7 @@ private:
         void paint(ui::Painter &painter) override
         {
             if (containsMouse())
-                drawPanelRect(painter, localRect(), 8, white(0.16));
+                drawPanelRect(painter, localRect(), ui::design::menuItemRadius, white(0.20));
         }
 
     private:
@@ -778,7 +779,7 @@ private:
 
         ui::SizeF sizeHint() const override
         {
-            return {m_entryWidth + 12, 30.0 * double(m_menu->m_names.size()) + 12};
+            return {m_entryWidth + 12, ui::design::menuRowHeight * double(m_menu->m_names.size()) + 12};
         }
 
         // In the menu's place, in the coordinates of the layer it is on.
@@ -797,16 +798,18 @@ private:
     protected:
         void layout() override
         {
-            const double listHeight = 30.0 * double(children().size());
+            const double rowHeight = ui::design::menuRowHeight;
+            const double listHeight = rowHeight * double(children().size());
             const double x = centeredStart(geometry().width, m_entryWidth);
             const double top = centeredStart(geometry().height, listHeight);
             for (size_t i = 0; i < children().size(); ++i)
-                children()[i]->setGeometry({x, top + 30.0 * double(i), m_entryWidth, 30});
+                children()[i]->setGeometry({x, top + rowHeight * double(i), m_entryWidth, rowHeight});
         }
 
         void paint(ui::Painter &painter) override
         {
-            drawPanelRect(painter, localRect(), 12, kBlack.withAlpha(0.55));
+            drawPanelRect(painter, localRect(), ui::design::menuRadius, kBlack.withAlpha(0.76),
+                          1 / painter.scale(), white(0.18));
         }
 
     private:

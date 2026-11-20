@@ -32,6 +32,7 @@ public:
     // org.cutefish.ClipboardHistory.toggle: shows or hides the picker.
     virtual void toggleClipboardHistory() = 0;
     virtual void toggleSpotlight() {}
+    virtual void showForceQuit() {}
 
     // org.cutefish.MenuBar: control the current MPRIS player.
     virtual void mediaPlayPause() = 0;
@@ -59,6 +60,7 @@ public:
     std::function<void()> launchpadToggle;
     std::function<void()> spotlightToggle;
     std::function<void()> clipboardToggle;
+    std::function<void()> forceQuitShow;
 
     void toggleAppList() override;
     void takeScreenshot(bool toClipboard) override;
@@ -67,6 +69,7 @@ public:
     void stopScreenRecording() override;
     void toggleClipboardHistory() override;
     void toggleSpotlight() override;
+    void showForceQuit() override { if (forceQuitShow) forceQuitShow(); }
     void mediaPlayPause() override;
     void mediaPause() override;
     void mediaPrevious() override;

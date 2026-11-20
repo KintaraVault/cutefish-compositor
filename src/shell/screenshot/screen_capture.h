@@ -111,7 +111,6 @@ public:
     static constexpr int kToolbarScreenMargin = 32;
     static constexpr std::chrono::milliseconds kPointerSettle {150};
     // The compositor's rounded window corners.
-    static constexpr double kWindowRadius = 14;
     // How long the overlays stay after a capture ends, so captures in a row
     // reuse them; then they go, as before the first capture.
     static constexpr std::chrono::seconds kOverlayExpiry {60};

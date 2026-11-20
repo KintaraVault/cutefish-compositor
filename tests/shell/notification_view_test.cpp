@@ -303,13 +303,14 @@ TEST_F(NotificationViewTest, ABannerShowsTopRightOnGlassAndTimesOut)
     ASSERT_NE(nullptr, window);
     EXPECT_EQ(wm::WindowRole::Notification, window->role());
     EXPECT_EQ(wm::FocusPolicy::NoFocus, window->focusPolicy());
-    // 6 from the work area's top right corner, 380 wide, as tall as the card.
-    EXPECT_EQ(base::Rect(1440 - 6 - 380, kMenuBar + 6, 380, banner->card()->implicitHeight(380)),
+    // 6 from the work area's top right corner and as tall as the card.
+    constexpr int width = NotificationPopups::kWidth;
+    EXPECT_EQ(base::Rect(1440 - 6 - width, kMenuBar + 6, width, banner->card()->implicitHeight(width)),
               window->bounds());
     const compositor::Surface *surface = banner->window()->surface();
     EXPECT_TRUE(surface->glass().enabled);
-    EXPECT_EQ(18, surface->backgroundBlurRadius());
-    EXPECT_EQ(base::Rect(0, 0, 380, window->bounds().height()), surface->backgroundBlurRect());
+    EXPECT_EQ(NotificationPopups::kRadius, surface->backgroundBlurRadius());
+    EXPECT_EQ(base::Rect(0, 0, width, window->bounds().height()), surface->backgroundBlurRect());
     ASSERT_EQ(1u, surface->glass().lenses.size());
     EXPECT_EQ(render::GlassFinish::NotificationLight, surface->glass().lenses.front().finish);
     const auto *animation = dynamic_cast<const scene::WindowAnimation *>(window->node());
@@ -402,15 +403,16 @@ TEST_F(NotificationViewTest, TimeoutsFollowTheRequestAndTheUrgency)
 
 TEST_F(NotificationViewTest, BannersStackNewestFirstAndGlide)
 {
+    constexpr int x = 1440 - NotificationPopups::kEdgeDistance - NotificationPopups::kWidth;
     notify("First");
     const auto *first = popups().banners()[0].get();
     const int height = first->height();
-    EXPECT_EQ(base::Point(1054, 38), first->window()->geometry().topLeft());
+    EXPECT_EQ(base::Point(x, 38), first->window()->geometry().topLeft());
     notify("Second");
     const auto *second = popups().banners()[1].get();
-    EXPECT_EQ(base::Point(1054, 38), second->window()->geometry().topLeft());
+    EXPECT_EQ(base::Point(x, 38), second->window()->geometry().topLeft());
     // The older one glides down under the new one.
-    EXPECT_EQ(base::Point(1054, 38 + second->height() + 9), first->stackPosition());
+    EXPECT_EQ(base::Point(x, 38 + second->height() + 9), first->stackPosition());
     frames(40);
     EXPECT_GT(first->window()->geometry().y(), 38);
     EXPECT_LT(first->window()->geometry().y(), 38 + height + 9);
@@ -498,11 +500,11 @@ TEST_F(NotificationViewTest, ClicksInvokeAndClose)
     ASSERT_TRUE(banner->card()->closeButton()->isVisible());
     // 7 down and 7 in from the trailing edge.
     const ui::RectF closeRect = banner->card()->closeButton()->geometry();
-    EXPECT_DOUBLE_EQ(380 - 7 - 24, closeRect.x);
+    EXPECT_DOUBLE_EQ(NotificationPopups::kWidth - 7 - 24, closeRect.x);
     EXPECT_DOUBLE_EQ(7, closeRect.y);
     EXPECT_DOUBLE_EQ(24, closeRect.width);
     client.signalsSeen.clear();
-    click(at.x() + 380 - 7 - 12, at.y() + 7 + 12);
+    click(at.x() + NotificationPopups::kWidth - 7 - 12, at.y() + 7 + 12);
     EXPECT_TRUE(test::runUntil([&] { return !closedSignals(2).empty(); }));
     EXPECT_EQ(std::vector<uint32_t> {closable}, closedSignals(2));
 }

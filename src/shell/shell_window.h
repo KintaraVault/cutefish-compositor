@@ -108,7 +108,7 @@ public:
     // A dialog of the shell's own, for a toplevel of the Normal role: off the
     // task list and the menu bar, and held at the size setSize() gives it, so
     // the user moves it but cannot resize, maximize or snap it.
-    void setDialog(bool dialog);
+    void setDialog();
     void setExclusiveZone(wm::ScreenEdge edge, int thickness, bool yieldsToMaximized = false);
     void clearExclusiveZone();
     // Takes the keyboard: activation, or for the Capture and Picker roles

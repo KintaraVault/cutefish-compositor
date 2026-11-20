@@ -74,6 +74,7 @@ enum class AcceleratorAction : uint32_t {
     // The clipboard history, performed by the shell.
     ToggleClipboardHistory,
     ToggleSpotlight,
+    ShowForceQuit,
 
     // Playback of the current MPRIS player.
     MediaPlayPause,

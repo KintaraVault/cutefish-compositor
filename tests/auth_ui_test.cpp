@@ -42,6 +42,7 @@
 #include "ui/embedded_window.h"
 #include "ui/label.h"
 #include "ui/text_field.h"
+#include "ui/theme.h"
 #include "ui/view.h"
 using namespace cutefish;
 
@@ -348,6 +349,38 @@ TEST(AuthUiTest, PanelFollowsOutputChanges)
     EXPECT_TRUE(test::runUntil([&] {
         return sizeOf(ui.renderImage()) == base::Size(size.width() * 2, size.height() * 2);
     }));
+}
+
+TEST(AuthUiTest, LoginAndLockReferenceFrames)
+{
+    const char *prefix = std::getenv("CUTEFISH_AUTH_PREVIEW");
+    if (!prefix)
+        GTEST_SKIP() << "Set CUTEFISH_AUTH_PREVIEW to save login and lock screen images";
+    const auto previousTheme = ui::Theme::current();
+    for (bool dark : {false, true}) {
+        ui::Theme::setCurrent(dark ? ui::Theme::dark() : ui::Theme::light());
+        for (bool login : {false, true}) {
+            scene::Node root;
+            session::SecureContainer secure(&root);
+            session::SessionController controller(&secure, nullptr,
+                    login ? session::SessionState::Login : session::SessionState::Active);
+            controller.setOutputs({{"one", base::Rect(0, 0, 1280, 800)}});
+            FakeBackend backend;
+            auth::AuthUi ui(&controller, nullptr, &backend);
+            if (!login) {
+                ASSERT_TRUE(controller.requestLock());
+                controller.notifyFramePresented();
+            }
+            ui.refresh();
+            ui.controller()->setUsers({"tester", "alex"});
+            ASSERT_TRUE(ui.window());
+            const auto image = ui.renderImage();
+            EXPECT_FALSE(image.isNull());
+            EXPECT_TRUE(image.savePng(std::string(prefix) + (login ? "-login" : "-lock")
+                                      + (dark ? "-dark.png" : "-light.png")));
+        }
+    }
+    ui::Theme::setCurrent(previousTheme);
 }
 
 TEST(AuthUiTest, OffscreenRenderingAndDirectInput)

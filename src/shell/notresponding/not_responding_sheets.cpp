@@ -113,9 +113,9 @@ void NotRespondingView::layout()
     const ui::SizeF forceQuit = m_forceQuit->sizeHint();
     const double buttonsHeight = std::max(wait.height, forceQuit.height);
     const double buttonsY = kPadding + rowHeight + kButtonsGap;
-    const double waitX = width - kPadding - wait.width;
+    const double waitX = width - kPadding - forceQuit.width - kButtonSpacing - wait.width;
     m_wait->setGeometry({waitX, buttonsY + (buttonsHeight - wait.height) / 2, wait.width, wait.height});
-    m_forceQuit->setGeometry({waitX - kButtonSpacing - forceQuit.width,
+    m_forceQuit->setGeometry({waitX + wait.width + kButtonSpacing,
                               buttonsY + (buttonsHeight - forceQuit.height) / 2, forceQuit.width,
                               forceQuit.height});
 }
@@ -124,8 +124,7 @@ void NotRespondingView::paint(ui::Painter &painter)
 {
     if (m_themeGeneration != ui::Theme::generation())
         applyTheme();
-    // Opaque, as a dialog is; the compositor clips the corners and draws the
-    // outline and the shadow.
+    // The shell window clips the dialog and supplies its outline to the compositor.
     painter.fillRect(localRect(), ui::color(ui::ColorId::PanelBackground));
 }
 
@@ -208,6 +207,7 @@ void NotRespondingSheets::show(wm::Window *window, int64_t application)
 
     Sheet sheet;
     sheet.window = std::make_unique<ShellWindow>(m_shell, wm::WindowRole::Sheet);
+    sheet.window->setDialog();
     auto view = std::make_unique<NotRespondingView>(name, icon);
     sheet.view = view.get();
     view->onWait = [this, application] { wait(application); };

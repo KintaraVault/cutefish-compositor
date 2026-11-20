@@ -37,7 +37,7 @@ using cutefish::i18n::trNoop;
 namespace cutefish::shell {
 
 // FishUI's bigRadius * 1.5, the toolbar's corners and its buttons' plates.
-static constexpr double kRadius = 18;
+static constexpr double kRadius = ui::design::popoverRadius;
 static constexpr double kButtonWidth = 40;
 static constexpr double kButtonHeight = 36;
 static constexpr double kSpacing = 2;
@@ -721,7 +721,7 @@ void CaptureTooltip::apply()
 
     const ui::Theme &theme = ui::Theme::current();
     ui::BubbleShape bubble;
-    bubble.radius = theme.mediumRadius;
+    bubble.radius = 6;
     bubble.continuousCorners = true;
 
     // The label's size decides the bubble's, before any window is made,
@@ -784,8 +784,9 @@ void CaptureTooltip::apply()
     popup->setInputRegion(base::Region());
     // The glass is the body; the arrow outside it continues the glass, and
     // the outline follows the whole bubble.
-    const render::GlassParams glass = theme.darkMode ? popupGlass(0.17, 0.17, 0.19, 0.6)
-                                                     : popupGlass(1, 1, 1, 0.6);
+    render::GlassParams glass = theme.darkMode ? popupGlass(.14, .14, .15, ui::design::menuTintDark)
+                                              : popupGlass(1, 1, 1, ui::design::menuTintLight);
+    glass.chroma = 0;
     const base::Rect region(int(std::floor(body.x)), int(std::floor(body.y)), int(std::ceil(body.width)),
                             int(std::ceil(body.height)));
     const double radius = std::min(bubble.radius, std::min(body.width, body.height) / 2);

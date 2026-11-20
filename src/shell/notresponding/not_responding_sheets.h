@@ -39,7 +39,7 @@ class NotRespondingView : public ui::View
 {
 public:
     static constexpr int kWidth = 400;
-    static constexpr int kPadding = 16;
+    static constexpr int kPadding = 20;
 
     NotRespondingView(std::string name, std::string icon);
 

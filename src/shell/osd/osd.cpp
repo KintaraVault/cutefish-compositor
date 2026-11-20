@@ -130,9 +130,10 @@ void Osd::place()
 void Osd::applyGlass()
 {
     const bool dark = ui::Theme::current().darkMode;
-    // PanelStyle.glassTint on PopupGlass.
-    const render::GlassParams glass = dark ? popupGlass(0.10, 0.10, 0.11, 0.75)
-                                           : popupGlass(0.90, 0.90, 0.92, 0.72);
+    render::GlassParams glass = dark ? popupGlass(.14, .14, .15, ui::design::menuTintDark)
+                                    : popupGlass(1, 1, 1, ui::design::menuTintLight);
+    glass.blurSigma = glassFixed(12);
+    glass.chroma = 0;
     m_window->setBackgroundBlur(base::Rect(0, 0, kWidth, kHeight), int(kRadius), glass);
 }
 

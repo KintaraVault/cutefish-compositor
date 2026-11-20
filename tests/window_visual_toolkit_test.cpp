@@ -132,7 +132,10 @@ void acceptClient(const std::string &program, std::vector<std::string> arguments
     clipboard_test::Harness h;
     compositor::Output output;
     output.pixelSize = {1920, 1080};
-    output.scale = *compositor::OutputScale::parse(std::to_string(bufferScale));
+    const auto scale = compositor::OutputScale::fromNumerator(
+        uint32_t(std::lround(bufferScale * compositor::OutputScale::denominator)));
+    ASSERT_TRUE(scale);
+    output.scale = *scale;
     h.compositor.setOutputScale(output.scale);
     h.scene.setSize(output.logicalSize());
     decoration::Theme theme;
@@ -365,7 +368,7 @@ void acceptClient(const std::string &program, std::vector<std::string> arguments
     EXPECT_EQ(window->isDecorated(), expected == scene::WindowVisualMode::ServerFrame);
     EXPECT_TRUE(state.clipContent);
     EXPECT_TRUE(state.drawOutline);
-    EXPECT_EQ(state.shape.radius, 14);
+    EXPECT_EQ(state.shape.radius, 16);
     EXPECT_NE(shadowController.shadowForWindow(window)->elevation(), wm::ShadowElevation::None);
     if (expected == scene::WindowVisualMode::ServerExterior) {
         EXPECT_TRUE(window->frameInsets().isNull());
