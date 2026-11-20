@@ -207,6 +207,7 @@ public:
     // --- wm::WindowObserver ---
 
     void onWindowActivationChanged(wm::Window *window, bool active) override;
+    void onWindowWallpaperTintChanged(wm::Window *window) override;
     void onWindowDestroying(wm::Window *window) override;
 
 private:

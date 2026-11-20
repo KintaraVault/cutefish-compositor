@@ -13,6 +13,7 @@
 #include "base/url.h"
 #include "compositor/capture_source.h"
 #include "compositor/compositor.h"
+#include "compositor/surface.h"
 #include "core/preferences.h"
 #include "cutefish/appearance/appearance.h"
 #include "render/renderer.h"
@@ -118,6 +119,7 @@ struct Wallpaper::Screen {
     base::Size shownSize;
     bool showingImage = false;
     bool showingColor = false;
+    TintField tint;
 };
 
 Wallpaper::Wallpaper(Shell *shell, std::string cacheDirectory, std::string servicesSettings)
@@ -125,8 +127,17 @@ Wallpaper::Wallpaper(Shell *shell, std::string cacheDirectory, std::string servi
     , m_cache(std::move(cacheDirectory))
     , m_servicesSettings(servicesSettings.empty() ? preferencesFile("services") : std::move(servicesSettings))
 {
+    const base::Settings settings(m_servicesSettings);
+    m_wallpaperTinting = settings.boolValue("Appearance/WallpaperTinting", true)
+            && !settings.boolValue("Appearance/ReduceTransparency", false);
     m_outputsChanged = m_shell->outputsChanged.connect([this] { updateOutputs(); });
     m_themeChanged = ui::Theme::changed().connect([this] { updateGradient(); });
+    if (auto *manager = m_shell->windowManager()) {
+        m_windowAdded = manager->windowAdded.connect([this](wm::Window *window) { trackWindow(window); });
+        m_windowRemoved = manager->windowRemoved.connect([this](wm::Window *window) { window->removeObserver(this); });
+        for (auto *window : manager->windows())
+            trackWindow(window);
+    }
     updateOutputs();
     if (m_shell->bus()) {
         m_ownAppearance = std::make_unique<appearance::Appearance>();
@@ -139,8 +150,13 @@ Wallpaper::~Wallpaper()
     m_appearanceChanged.reset();
     m_outputsChanged.reset();
     m_themeChanged.reset();
-    if (wm::WindowManager *manager = m_shell->windowManager())
+    m_windowAdded.reset();
+    m_windowRemoved.reset();
+    if (wm::WindowManager *manager = m_shell->windowManager()) {
+        for (auto *window : manager->windows())
+            window->removeObserver(this);
         manager->overview()->setWallpaperNodes({});
+    }
     for (const std::unique_ptr<Screen> &screen : m_screens) {
         if (screen->captureSource) {
             screen->captureSource->node = nullptr;
@@ -176,7 +192,12 @@ void Wallpaper::reloadAppearance()
     background.type = m_appearance->backgroundType();
     background.path = localFile(m_appearance->wallpaper());
     background.color = parseColor(m_appearance->backgroundColor()).value_or(ui::Color {0, 0, 0, 255});
+    const bool enabled = m_appearance->wallpaperTinting() && !m_appearance->reduceTransparency();
+    const bool tintChanged = m_wallpaperTinting != enabled;
+    m_wallpaperTinting = enabled;
     setBackground(background);
+    if (tintChanged)
+        updateWindowTints();
 }
 
 void Wallpaper::readServicesSettings()
@@ -209,6 +230,7 @@ void Wallpaper::setBackground(const Background &background)
     m_hasBackground = true;
     for (const std::unique_ptr<Screen> &screen : m_screens)
         reload(*screen);
+    updateWindowTints();
     backgroundChanged();
 }
 
@@ -271,6 +293,14 @@ void Wallpaper::updateOutputs()
     if (wm::WindowManager *manager = m_shell->windowManager())
         manager->overview()->setWallpaperNodes(nodes());
     updateShownPictures();
+    updateWindowTints();
+}
+
+// The fallback colour, like the rendered wallpaper, is composited over black.
+static TintField tintForColor(ui::Color color)
+{
+    const auto channel = [alpha = color.a](int value) { return uint8_t((value * alpha + 127) / 255); };
+    return TintField::solid({channel(color.r), channel(color.g), channel(color.b), 255});
 }
 
 void Wallpaper::reload(Screen &screen)
@@ -292,6 +322,7 @@ void Wallpaper::reload(Screen &screen)
         screen.showingColor = true;
         screen.node->setPicture({});
         screen.node->setColor(opaqueColor(background.color));
+        screen.tint = tintForColor(background.color);
         if (screen.output.primary)
             publish(true, BarBackdrop::styleForSample(BarBackdrop::sampleColor(background.color)));
         updateGradient();
@@ -341,30 +372,40 @@ void Wallpaper::tryCommit(Screen &screen)
         if (!screen.showingImage) {
             screen.showingColor = true;
             screen.node->setColor(opaqueColor(background.color));
+            screen.tint = tintForColor(background.color);
             updateGradient();
+            updateWindowTints();
         }
         return;
     }
 
-    // On the primary output the bar must know how to read against it first.
-    if (screen.output.primary) {
+    // Judge the same cropped image that will be presented. Compute the
+    // desktop field on every output and the menu bar's strip on the primary.
+    if (swap || screen.output.primary) {
         const std::string key = sampleKey(screen.pendingPath, screen.pendingSize);
-        if (!m_samples.count(key)) {
+        auto sample = m_samples.find(key);
+        if (sample == m_samples.end() || (screen.output.primary && !sample->second.sampledBar)) {
             if (screen.sampling.isPending())
                 return;
             const ui::Bitmap image = swap ? screen.pendingImage : screen.node->picture();
             const int barHeight = int(std::lround(double(BarBackdrop::kBarHeight) * screen.device.height()
                                                   / std::max(1, screen.output.bounds.height())));
             screen.sampling = base::ThreadPool::global().run(
-                    [image, barHeight] { return BarBackdrop::sampleImage(image, barHeight); },
-                    [this, &screen, key](BarBackdrop::Sample sample) {
-                        if (m_samples.size() >= kMaxSamples)
+                    [image, barHeight, primary = screen.output.primary] {
+                        return Samples{primary ? BarBackdrop::sampleImage(image, barHeight) : BarBackdrop::Sample{},
+                                       TintField::fromImage(image), primary};
+                    },
+                    [this, &screen, key](Samples sample) {
+                        if (!m_samples.count(key) && m_samples.size() >= kMaxSamples)
                             m_samples.clear();
-                        m_samples[key] = sample;
+                        auto &cached = m_samples[key];
+                        if (sample.sampledBar || !cached.sampledBar)
+                            cached = std::move(sample);
                         tryCommit(screen);
                     });
             return;
         }
+        screen.tint = sample->second.tint;
     }
 
     if (swap) {
@@ -379,6 +420,7 @@ void Wallpaper::tryCommit(Screen &screen)
         present(screen);
     updateGradient();
     updateShownPictures();
+    updateWindowTints();
 }
 
 void Wallpaper::updateShownPictures()
@@ -398,7 +440,39 @@ void Wallpaper::present(const Screen &screen)
     const auto it = m_samples.find(sampleKey(screen.shownPath, screen.shownSize));
     if (it == m_samples.end())
         return;
-    publish(it->second.valid, BarBackdrop::styleForSample(it->second));
+    publish(it->second.bar.valid, BarBackdrop::styleForSample(it->second.bar));
+}
+
+void Wallpaper::trackWindow(wm::Window *window)
+{
+    window->addObserver(this);
+    updateWindowTint(window);
+}
+
+void Wallpaper::updateWindowTints()
+{
+    if (auto *manager = m_shell->windowManager()) {
+        for (auto *window : manager->windows())
+            updateWindowTint(window);
+    }
+}
+
+void Wallpaper::updateWindowTint(wm::Window *window)
+{
+    auto *surface = window->rootSurface();
+    if (!surface)
+        return;
+    TintField::Sum tint;
+    const bool material = window->role() == wm::WindowRole::Normal || window->role() == wm::WindowRole::Sheet;
+    if (material && m_wallpaperTinting && window->stateType() != wm::WindowStateType::Fullscreen) {
+        for (const auto &screen : m_screens) {
+            const auto &output = screen->output.bounds;
+            const auto overlap = output.intersected(window->bounds());
+            if (!overlap.isEmpty())
+                tint.add(screen->tint.sample(output, overlap), double(overlap.width()) * overlap.height());
+        }
+    }
+    surface->setWallpaperTint(tint.tone());
 }
 
 void Wallpaper::publish(bool judged, const BarBackdrop::Style &style)

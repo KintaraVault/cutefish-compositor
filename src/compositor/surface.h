@@ -30,6 +30,7 @@
 #include "render/glass.h"
 #include "render/presentation.h"
 #include "ui/path.h"
+#include "ui/wallpaper_tint.h"
 
 namespace cutefish::render {
 
@@ -262,6 +263,11 @@ public:
 
     void setHasFractionalScale(bool value) { m_hasFractionalScale = value; }
 
+    ui::WallpaperTint wallpaperTint() const { return m_wallpaperTint; }
+    void setWallpaperTint(ui::WallpaperTint tint);
+    bool hasWallpaperTintObserver() const { return m_hasWallpaperTintObserver; }
+    void setHasWallpaperTintObserver(bool value) { m_hasWallpaperTintObserver = value; }
+
     bool hasViewport() const { return m_hasViewport; }
 
     void setHasViewport(bool value) { m_hasViewport = value; }
@@ -482,6 +488,8 @@ private:
     bool m_hadSubSurfaceRole = false;
     bool m_hasRole = false;
     bool m_hasFractionalScale = false;
+    ui::WallpaperTint m_wallpaperTint;
+    bool m_hasWallpaperTintObserver = false;
     bool m_hasViewport = false;
     std::unique_ptr<scene::Node> m_detachedNode;
     bool m_needsCommitSurface = false;

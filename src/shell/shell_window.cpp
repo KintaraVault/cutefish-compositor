@@ -523,6 +523,12 @@ void ShellWindow::onWindowActivationChanged(wm::Window *window, bool active)
         m_window->setActive(active);
 }
 
+void ShellWindow::onWindowWallpaperTintChanged(wm::Window *window)
+{
+    if (window == m_observed && m_window)
+        m_window->setWallpaperTint(m_surface->wallpaperTint());
+}
+
 void ShellWindow::onWindowDestroying(wm::Window *window)
 {
     if (window != m_observed)
@@ -600,8 +606,10 @@ void ShellWindow::observeWindow()
     m_observed = window;
     if (m_observed)
         m_observed->addObserver(this);
-    if (m_window)
+    if (m_window) {
         m_window->setActive(m_observed && m_observed->isActive());
+        m_window->setWallpaperTint(m_observed ? m_surface->wallpaperTint() : ui::WallpaperTint{});
+    }
     mappedChanged();
 }
 

@@ -81,15 +81,10 @@ private:
 
     void apply()
     {
-        static constexpr ui::Color kAccents[] = {ui::accent::blue,   ui::accent::red,
-                                                 ui::accent::green,  ui::accent::purple,
-                                                 ui::accent::pink,   ui::accent::orange,
-                                                 ui::accent::grey};
         const bool dark = m_theme && m_theme->darkMode();
         ui::Theme theme = dark ? ui::Theme::dark() : ui::Theme::light();
         const int accent = m_theme ? m_theme->accentColor() : 0;
-        if (accent >= 0 && accent < int(std::size(kAccents)))
-            theme.highlight = kAccents[accent];
+        theme.highlight = ui::accent::fromIndex(accent);
         theme.iconTheme = m_iconTheme;
         theme.fontFamily = m_fontFamily;
         theme.fontPointSize = m_fontPointSize > 0 ? m_fontPointSize : 9;

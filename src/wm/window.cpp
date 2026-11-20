@@ -221,6 +221,15 @@ void Window::onSurfaceWindowHintsChanged(compositor::Surface *surface)
         m_manager->onWindowStackingChanged(this);
 }
 
+void Window::onSurfaceWallpaperTintChanged(compositor::Surface *surface)
+{
+    if (surface != m_rootSurface)
+        return;
+    forEachObserver(this, m_observers, [this](WindowObserver *observer) {
+        observer->onWindowWallpaperTintChanged(this);
+    });
+}
+
 base::Rect Window::presentedBounds() const
 {
     const base::Rect requested(base::Point(0, 0), m_bounds.size());
@@ -668,6 +677,9 @@ void Window::setRole(WindowRole role)
     }
     if (m_manager)
         m_manager->onWindowStackingChanged(this);
+    forEachObserver(this, m_observers, [this](WindowObserver *observer) {
+        observer->onWindowRoleChanged(this);
+    });
 }
 
 void Window::setPanelBehavior(PanelBehavior behavior)

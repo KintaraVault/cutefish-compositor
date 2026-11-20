@@ -459,6 +459,12 @@ void Decoration::toggleMaximize()
         m_window->maximize();
 }
 
+void Decoration::onWindowWallpaperTintChanged(wm::Window *window)
+{
+    if (window == m_window)
+        scheduleRepaint();
+}
+
 void Decoration::onWindowBoundsChanged(wm::Window *window, const base::Rect &)
 {
     if (window != m_window)

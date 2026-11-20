@@ -54,7 +54,7 @@ struct Metrics {
     // The toolkit's window controls, centred in the title bar and as far from
     // the leading edge as from the top.
     int buttonSize = int(ui::window_controls::kButton);
-    int buttonSpacing = int(ui::window_controls::kSpacing);
+    int buttonSpacing = int(ui::window_controls::kColoredSpacing);
     int buttonsMargin = (titleBarHeight - buttonSize) / 2;
     // kwin-plugins: the caption keeps this much clear of the buttons.
     int captionMargin = 20;
@@ -204,7 +204,7 @@ private:
     bool m_darkMode = false;
     int m_accentColor = 0;
     bool m_reduceTransparency = false;
-    bool m_coloredWindowControls = false;
+    bool m_coloredWindowControls = true;
     std::vector<ThemeObserver *> m_observers;
 
     render::Renderer *m_renderer = nullptr;

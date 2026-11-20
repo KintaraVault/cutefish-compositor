@@ -268,6 +268,10 @@ void SpotlightView::reset()
 
 void SpotlightView::setMode(Mode mode)
 {
+    // System Settings edits the same file. Pick up those changes when the
+    // panel next opens or changes mode, before rebuilding the results.
+    m_settings.reload();
+    m_list = m_settings.boolValue("Applications/List");
     m_menu.close();
     stopScrolling();
     const bool changed = m_mode != mode;

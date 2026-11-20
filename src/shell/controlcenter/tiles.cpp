@@ -85,6 +85,74 @@ std::shared_ptr<base::file::TemporaryFile> fetchCover(const std::string &url, st
         return {};
     return file;
 }
+
+// Sample the same cover file as ImageView, on a worker rather than in paint().
+// Prefer the strongest recurring hue so dark covers with a small bright motif
+// still give the visualizer a readable colour.
+ui::Color coverAccent(const std::string &path)
+{
+    const ui::Bitmap image = ui::Bitmap::decodeFile(path, {32, 32}, ui::Bitmap::Scaling::Cover);
+    if (image.isNull())
+        return ui::Color::rgb(0xcbd0d5);
+    struct Hue {
+        double weight = 0;
+        double red = 0, green = 0, blue = 0;
+    };
+    std::array<Hue, 24> hues {};
+    double neutralWeight = 0, neutralBrightness = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const uint32_t pixel = image.pixel(x, y);
+            const double alpha = (pixel >> 24) & 255;
+            if (alpha < 96)
+                continue;
+            const double red = std::min(255., double((pixel >> 16) & 255) * 255 / alpha);
+            const double green = std::min(255., double((pixel >> 8) & 255) * 255 / alpha);
+            const double blue = std::min(255., double(pixel & 255) * 255 / alpha);
+            const double high = std::max({red, green, blue});
+            const double low = std::min({red, green, blue});
+            const double chroma = high - low;
+            const double value = high / 255;
+            if (value < .12)
+                continue;
+            const double opacity = alpha / 255;
+            neutralWeight += opacity * value;
+            neutralBrightness += high * opacity * value;
+            const double saturation = high ? chroma / high : 0;
+            if (saturation < .19)
+                continue;
+            double hue = 0;
+            if (high == red)
+                hue = std::fmod((green - blue) / chroma + 6, 6);
+            else if (high == green)
+                hue = (blue - red) / chroma + 2;
+            else
+                hue = (red - green) / chroma + 4;
+            auto &bucket = hues[std::clamp(int(hue * 4), 0, 23)];
+            const double weight = saturation * saturation * std::min(1., value * 2.8) * opacity;
+            bucket.weight += weight;
+            bucket.red += red * weight;
+            bucket.green += green * weight;
+            bucket.blue += blue * weight;
+        }
+    }
+    const auto best = std::max_element(hues.begin(), hues.end(),
+                                       [](const Hue &a, const Hue &b) { return a.weight < b.weight; });
+    if (best->weight < .05) {
+        if (neutralWeight <= 0)
+            return ui::Color::rgb(0xcbd0d5);
+        const auto grey = uint8_t(std::clamp(neutralBrightness / neutralWeight, 155., 230.));
+        return {grey, grey, grey, 255};
+    }
+    const double red = best->red / best->weight;
+    const double green = best->green / best->weight;
+    const double blue = best->blue / best->weight;
+    const double boost = std::clamp(185. / std::max({red, green, blue}), 1., 2.6);
+    const auto channel = [boost](double value) {
+        return uint8_t(std::clamp(value * boost + 8, 0., 255.));
+    };
+    return {channel(red), channel(green), channel(blue), 255};
+}
 } // namespace
 
 void SvgIcon::setFile(std::string file)
@@ -472,13 +540,39 @@ void IconButton::paint(ui::Painter &painter)
     const double unit = (m_size > 0 ? m_size : rect.height * .75) * (1 - .055 * m_press) / 24;
     const auto shape = [&](const auto &points, double dx, double direction) {
         ui::Path path;
-        for (size_t i = 0; i < points.size(); ++i) {
-            const ui::PointF p {rect.width / 2 + unit * direction * (points[i].x + dx),
-                                rect.height / 2 + unit * points[i].y};
-            if (i == 0)
-                path.moveTo(p);
-            else
-                path.lineTo(p);
+        std::vector<ui::PointF> vertices;
+        for (const auto &point : points) {
+            const ui::PointF p {rect.width / 2 + unit * direction * (point.x + dx),
+                                rect.height / 2 + unit * point.y};
+            if (vertices.empty() || std::hypot(p.x - vertices.back().x, p.y - vertices.back().y) > .01)
+                vertices.push_back(p);
+        }
+        if (vertices.size() < 3)
+            return;
+        if (m_size > 0) {
+            // The large Live Activity controls have softly rounded corners,
+            // including the two skip triangles and the pause bars.
+            for (size_t i = 0; i < vertices.size(); ++i) {
+                const auto &prev = vertices[(i + vertices.size() - 1) % vertices.size()];
+                const auto &cur = vertices[i];
+                const auto &next = vertices[(i + 1) % vertices.size()];
+                const double in = std::hypot(cur.x - prev.x, cur.y - prev.y);
+                const double out = std::hypot(next.x - cur.x, next.y - cur.y);
+                const double cut = std::min({1.35 * unit, in * .3, out * .3});
+                const ui::PointF entry {cur.x + (prev.x - cur.x) * cut / in,
+                                        cur.y + (prev.y - cur.y) * cut / in};
+                const ui::PointF exit {cur.x + (next.x - cur.x) * cut / out,
+                                       cur.y + (next.y - cur.y) * cut / out};
+                if (i == 0)
+                    path.moveTo(entry);
+                else
+                    path.lineTo(entry);
+                path.quadTo(cur, exit);
+            }
+        } else {
+            path.moveTo(vertices.front());
+            for (size_t i = 1; i < vertices.size(); ++i)
+                path.lineTo(vertices[i]);
         }
         path.close();
         painter.fillPath(path, m_glyphInk);
@@ -564,7 +658,7 @@ void IconButton::pointerRelease(const ui::PointerEvent &event)
 // MprisItem's buttons: 28 px each, 6 apart.
 static constexpr double kButtonSize = 28;
 
-void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, const MediaBands &bands)
+void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, const MediaBands &bands, ui::Color accent)
 {
     static constexpr std::array envelope {.32, .64, .98, .92, .62, .34};
     const double step = rect.width / envelope.size();
@@ -573,7 +667,7 @@ void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, const Media
         const double height = std::lerp(width, rect.height * envelope[i], bands[i]);
         painter.fillRoundedRect({rect.x + step * (i + .5) - width / 2,
                                  rect.y + (rect.height - height) / 2, width, height}, width / 2,
-                                 ui::Color::rgb(0xaad4ff).withAlpha(.57 + .39 * bands[i]));
+                                 accent.withAlpha(.60 + .40 * bands[i]));
     }
 }
 
@@ -680,6 +774,7 @@ private:
 MediaTile::MediaTile()
 {
     m_cover = addChild<MediaCover>();
+    m_cover->onAccentChanged = [this] { requestPaint(); };
     m_title = addChild<ui::Label>();
     m_title->setElide(ui::Label::Elide::Right);
     m_artist = addChild<ui::Label>();
@@ -842,6 +937,10 @@ void MediaCover::setUrl(const std::string &url)
         return;
     m_url = url;
     m_request.reset();
+    m_paletteRequest.reset();
+    m_accent = ui::Color::rgb(0xcbd0d5);
+    if (onAccentChanged)
+        onAccentChanged();
     m_image->setSource({});
     m_file.reset();
     m_ready = false;
@@ -853,6 +952,7 @@ void MediaCover::setUrl(const std::string &url)
         path = url;
     if (!path.empty()) {
         m_image->setSource(path);
+        loadAccent(path);
     } else if (url.starts_with("https://") || url.starts_with("http://")) {
         // Compact and expanded views can reuse the downloaded file while
         // either one still has it. The ImageView caches each decoded size.
@@ -861,6 +961,7 @@ void MediaCover::setUrl(const std::string &url)
         if (auto it = covers.find(url); it != covers.end()) {
             m_file = it->second.lock();
             m_image->setSource(m_file->path());
+            loadAccent(m_file->path());
             return;
         }
         static base::ThreadPool pool(2);
@@ -874,6 +975,7 @@ void MediaCover::setUrl(const std::string &url)
             if (file) {
                 covers[m_url] = file;
                 m_image->setSource(file->path());
+                loadAccent(file->path());
             } else {
                 m_loading = false;
                 animate();
@@ -885,6 +987,22 @@ void MediaCover::setUrl(const std::string &url)
     }
     animate();
     requestPaint();
+}
+
+void MediaCover::loadAccent(const std::string &path)
+{
+    static base::ThreadPool palettePool(2);
+    m_paletteRequest = std::make_shared<int>();
+    const std::weak_ptr<int> request = m_paletteRequest;
+    palettePool.run([path, request] {
+        return request.expired() ? ui::Color::rgb(0xcbd0d5) : coverAccent(path);
+    }, [this, request](ui::Color accent) {
+        if (request.expired() || m_accent == accent)
+            return;
+        m_accent = accent;
+        if (onAccentChanged)
+            onAccentChanged();
+    }).detach();
 }
 
 void MediaCover::animate()
@@ -933,25 +1051,25 @@ void MediaTile::layout()
         animateTimeline();
         const double w = localRect().width;
         const double inset = 16;
-        const ui::RectF art {inset, 15, 51, 51};
+        const ui::RectF art {inset, 16, 56, 56};
         m_cover->setGeometry(art);
         const double x = art.x + art.width + 10;
         const double textWidth = std::max(0., w - x - 47);
         m_title->setFontSize(14);
         m_title->setWeight(700);
         m_title->setColor(kWhite);
-        m_title->setGeometry({x, m_artist->text().empty() ? 30. : 22., textWidth, 18});
+        m_title->setGeometry({x, m_artist->text().empty() ? 32. : 27., textWidth, 18});
         m_artist->setVisible(!m_artist->text().empty());
         m_artist->setFontSize(13);
         m_artist->setColor(kWhite);
-        m_artist->setGeometry({x, 41, textWidth, 17});
+        m_artist->setGeometry({x, 43, textWidth, 17});
         m_elapsed->setGeometry({inset, 75, 36, 23});
         m_remaining->setGeometry({w - inset - 39, 75, 39, 23});
-        m_progress->setGeometry({inset + 39, 75, std::max(0., w - 2 * inset - 81), 23});
-        constexpr double slot = 42;
+        m_progress->setGeometry({inset + 31, 75, std::max(0., w - 2 * inset - 69), 23});
+        constexpr double slot = 44;
         for (size_t i = 0; i < 3; ++i) {
             auto *button = std::array {m_previous, m_play, m_next}[i];
-            button->setGlyphSize(i == 1 ? 39 : 26);
+            button->setGlyphSize(i == 1 ? 40 : 31);
             button->setGeometry({w / 2 + (double(i) - 1) * w * .25 - slot / 2, 104, slot, slot});
         }
         return;
@@ -1010,7 +1128,7 @@ void MediaTile::paint(ui::Painter &painter)
     if (!m_controlStyle)
         panel::paintTile(painter, localRect());
     if (m_progress)
-        paintLiveMediaWave(painter, {localRect().width - 39, 34, 23, 13}, m_bands);
+        paintLiveMediaWave(painter, {localRect().width - 39, 34, 23, 13}, m_bands, m_cover->accentColor());
 }
 
 void MediaTile::setBands(const MediaBands &bands)

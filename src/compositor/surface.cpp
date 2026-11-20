@@ -696,6 +696,17 @@ void Surface::applyCachedState()
         m_compositor->scheduleRepaint();
 }
 
+void Surface::setWallpaperTint(ui::WallpaperTint tint)
+{
+    if (m_wallpaperTint == tint)
+        return;
+    m_wallpaperTint = tint;
+    for (SurfaceObserver *observer : std::vector<SurfaceObserver *>(m_observers)) {
+        if (hasSurfaceObserver(observer))
+            observer->onSurfaceWallpaperTintChanged(this);
+    }
+}
+
 void Surface::addSurfaceObserver(SurfaceObserver *observer)
 {
     if (!hasSurfaceObserver(observer))

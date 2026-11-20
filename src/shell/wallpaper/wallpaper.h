@@ -15,9 +15,11 @@
 #include "base/thread_pool.h"
 #include "shell/shell.h"
 #include "shell/wallpaper/bar_backdrop.h"
+#include "shell/wallpaper/tint_field.h"
 #include "shell/wallpaper/wallpaper_cache.h"
 #include "ui/bitmap.h"
 #include "ui/geometry.h"
+#include "wm/window_observer.h"
 
 namespace cutefish::appearance {
 class Appearance;
@@ -45,7 +47,7 @@ namespace cutefish::shell {
 // the menu bar. A new picture replaces the old one only once it is decoded
 // and, on the primary output, judged for the bar; the picture, the gradient
 // and the bar's contents then change in the same frame.
-class Wallpaper final : public Component
+class Wallpaper final : public Component, private wm::WindowObserver
 {
 public:
     // What the desktop shows, as Appearance publishes it.
@@ -98,6 +100,11 @@ public:
 private:
     struct Screen;
     class CaptureNode;
+    struct Samples {
+        BarBackdrop::Sample bar;
+        TintField tint;
+        bool sampledBar = false;
+    };
 
     void updateOutputs();
     void reload(Screen &screen);
@@ -110,6 +117,12 @@ private:
     void updateGradient();
     void readServicesSettings();
     void reloadAppearance();
+    void trackWindow(wm::Window *window);
+    void updateWindowTints();
+    void updateWindowTint(wm::Window *window);
+    void onWindowBoundsChanged(wm::Window *window, const base::Rect &) override { updateWindowTint(window); }
+    void onWindowStateTypeChanged(wm::Window *window, wm::WindowStateType) override { updateWindowTint(window); }
+    void onWindowRoleChanged(wm::Window *window) override { updateWindowTint(window); }
     static std::string sampleKey(const std::string &path, const base::Size &size);
 
     Shell *m_shell;
@@ -117,16 +130,19 @@ private:
     std::string m_servicesSettings;
     Background m_background;
     bool m_hasBackground = false;
+    bool m_wallpaperTinting = true;
     appearance::Appearance *m_appearance = nullptr;
     std::unique_ptr<appearance::Appearance> m_ownAppearance;
     base::Subscription m_appearanceChanged;
     base::Job m_settingsJob;
     std::vector<std::unique_ptr<Screen>> m_screens;
-    std::map<std::string, BarBackdrop::Sample> m_samples;
+    std::map<std::string, Samples> m_samples;
     bool m_judged = false;
     BarBackdrop::Style m_style;
     base::Subscription m_outputsChanged;
     base::Subscription m_themeChanged;
+    base::Subscription m_windowAdded;
+    base::Subscription m_windowRemoved;
 };
 
 } // namespace cutefish::shell

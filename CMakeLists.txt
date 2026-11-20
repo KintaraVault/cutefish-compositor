@@ -116,6 +116,8 @@ cutefish_wayland_protocol(cutefish-window-hints-v1
     ${CMAKE_CURRENT_SOURCE_DIR}/protocols/cutefish-window-hints-v1.xml)
 cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${CMAKE_CURRENT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
+cutefish_wayland_protocol(cutefish-wallpaper-tint-v1
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocols/cutefish-wallpaper-tint-v1.xml)
 cutefish_wayland_protocol(cutefish-status-item-v1
     ${CUTEFISH_PRIVATE_PROTOCOL_DIR}/cutefish-status-item-v1.xml)
 cutefish_wayland_protocol(cutefish-main-menu-v1
@@ -166,7 +168,8 @@ add_library(cutefish-protocols STATIC
     ${fractional-scale-v1_SOURCES}
     ${xdg-output-unstable-v1_SOURCES}
     ${ext-data-control-v1_SOURCES} ${wlr-data-control-unstable-v1_SOURCES}
-    ${cutefish-window-hints-v1_SOURCES} ${cutefish-surface-blur-v1_SOURCES} ${xdg-shell_SOURCES} ${xdg-decoration_SOURCES}
+    ${cutefish-window-hints-v1_SOURCES} ${cutefish-surface-blur-v1_SOURCES}
+    ${cutefish-wallpaper-tint-v1_SOURCES} ${xdg-shell_SOURCES} ${xdg-decoration_SOURCES}
     ${cutefish-status-item-v1_SOURCES}
     ${cutefish-main-menu-v1_SOURCES}
     ${cutefish-window-placement-v1_SOURCES}
@@ -339,6 +342,8 @@ add_library(cutefish-compositor-core STATIC
     src/compositor/output_scale.h
     src/wayland/protocols/wp_fractional_scale.cpp
     src/wayland/protocols/wp_fractional_scale.h
+    src/wayland/protocols/wallpaper_tint.cpp
+    src/wayland/protocols/wallpaper_tint.h
     src/wayland/protocols/wl_subcompositor.cpp
     src/wayland/protocols/wl_subcompositor.h
     src/wayland/protocols/image_capture.cpp

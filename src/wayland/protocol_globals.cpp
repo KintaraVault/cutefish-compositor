@@ -28,6 +28,7 @@
 #include "wayland/protocols/primary_selection.h"
 #include "wayland/protocols/status_item.h"
 #include "wayland/protocols/surface_blur.h"
+#include "wayland/protocols/wallpaper_tint.h"
 #include "wayland/protocols/window_hints.h"
 #include "wayland/protocols/window_placement.h"
 #include "wayland/protocols/wl_compositor.h"
@@ -106,7 +107,8 @@ bool ProtocolGlobals::registerCoreGlobals()
         || !createXdgDialogGlobal(display) || !createXdgExporterV2Global(display)
         || (m_deps.windowManager
             && !createXdgToplevelDragGlobal(display, m_deps.windowManager))
-        || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
+         || !createXdgImporterV2Global(display) || !createSurfaceBlurGlobal(display)
+         || !createWallpaperTintGlobal(display)
         || !createWindowHintsGlobal(display, m_deps.windowManager) || !createAppMenuGlobal(display)
         || !createGtkShellGlobal(display)
         || !createMainMenuGlobal(display, m_seat.get()) || !createFractionalScaleGlobal(display)

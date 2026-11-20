@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <cutefish-wallpaper-tint-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
@@ -27,6 +28,7 @@
 #include "scene/scene.h"
 #include "shm_test_util.h"
 #include "wayland/protocols/wl_compositor.h"
+#include "wayland/protocols/wallpaper_tint.h"
 #include "wayland/protocols/wl_output.h"
 #include "wayland/protocols/wl_shm.h"
 #include "wayland/protocols/wl_subcompositor.h"
@@ -53,6 +55,7 @@ protected:
     wl_global *outputGlobal = nullptr;
     wp_fractional_scale_manager_v1 *scaleManager = nullptr;
     wp_fractional_scale_v1 *fractional = nullptr;
+    cutefish_wallpaper_tint_manager_v1 *tintManager = nullptr;
     uint32_t outputName = 0;
     uint32_t xdgName = 0;
     std::vector<uint32_t> scales;
@@ -71,6 +74,7 @@ protected:
         ASSERT_TRUE(wayland::createCompositorGlobal(server, &compositor));
         ASSERT_TRUE(wayland::createViewporterGlobal(server));
         ASSERT_TRUE(wayland::createFractionalScaleGlobal(server));
+        ASSERT_TRUE(wayland::createWallpaperTintGlobal(server));
         ASSERT_TRUE(wayland::createXdgOutputManagerGlobal(server));
         output.pixelSize = base::Size(1920, 1080);
         output.physicalSizeMm = base::Size(509, 286);
@@ -100,7 +104,10 @@ protected:
                         self->scaleManager = static_cast<wp_fractional_scale_manager_v1 *>(
                                 wl_registry_bind(registry, name,
                                                  &wp_fractional_scale_manager_v1_interface, 1));
-                    } else if (std::strcmp(interface, "wl_output") == 0) {
+                     } else if (std::strcmp(interface, cutefish_wallpaper_tint_manager_v1_interface.name) == 0) {
+                         self->tintManager = static_cast<cutefish_wallpaper_tint_manager_v1 *>(
+                                 wl_registry_bind(registry, name, &cutefish_wallpaper_tint_manager_v1_interface, 1));
+                     } else if (std::strcmp(interface, "wl_output") == 0) {
                         EXPECT_EQ(version, 4u);
                         self->outputName = name;
                     } else if (std::strcmp(interface, "zxdg_output_manager_v1") == 0) {
@@ -205,6 +212,8 @@ protected:
             wp_fractional_scale_v1_destroy(fractional);
         if (scaleManager)
             wp_fractional_scale_manager_v1_destroy(scaleManager);
+        if (tintManager)
+            cutefish_wallpaper_tint_manager_v1_destroy(tintManager);
         if (viewport)
             wp_viewport_destroy(viewport);
         if (surface)
@@ -229,6 +238,33 @@ protected:
         }
     }
 };
+
+TEST_F(FractionalScaleProtocolTest, WallpaperToneUpdatesAndSurvivesSurfaceDestruction)
+{
+    ASSERT_TRUE(tintManager);
+    auto *tint = cutefish_wallpaper_tint_manager_v1_get_tint(tintManager, surface);
+    std::vector<ui::WallpaperTint> tones;
+    static const cutefish_wallpaper_tint_v1_listener listener = {
+        [](void *data, cutefish_wallpaper_tint_v1 *, uint32_t light, uint32_t dark) {
+            static_cast<std::vector<ui::WallpaperTint> *>(data)->push_back({light, dark});
+        }};
+    cutefish_wallpaper_tint_v1_add_listener(tint, &listener, &tones);
+    ASSERT_GE(roundtrip(), 0);
+    const auto colour = ui::WallpaperTint::fromSample(90, 140, 220);
+    model->setWallpaperTint(colour);
+    model->setWallpaperTint(colour);
+    model->setWallpaperTint({});
+    ASSERT_GE(roundtrip(), 0);
+    EXPECT_EQ(tones, (std::vector<ui::WallpaperTint>{{}, colour, {}}));
+
+    wp_viewport_destroy(viewport);
+    viewport = nullptr;
+    wl_surface_destroy(surface);
+    surface = nullptr;
+    ASSERT_GE(roundtrip(), 0);
+    cutefish_wallpaper_tint_v1_destroy(tint);
+    EXPECT_GE(roundtrip(), 0);
+}
 
 TEST_F(FractionalScaleProtocolTest, InitialUnmappedAndTransitionsPreserveClientState)
 {

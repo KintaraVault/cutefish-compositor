@@ -19,6 +19,7 @@
 #include <linux/input-event-codes.h>
 #include <gtest/gtest.h>
 
+#include "base/settings.h"
 #include "base/thread_pool.h"
 #include "compositor/capture_source.h"
 #include "compositor/compositor.h"
@@ -322,6 +323,12 @@ protected:
     std::vector<std::unique_ptr<compositor::Surface>> surfaces;
     std::shared_ptr<compositor::ShmPool> pool = testsupport::makePool(1 << 22);
 
+    void createWallpaper()
+    {
+        wallpaper = shell->addComponent(std::make_unique<shell::Wallpaper>(
+                shell.get(), directory.filePath("cache"), directory.filePath("services.ini")));
+    }
+
     void SetUp() override
     {
         scene.setSize(kOutput.size());
@@ -330,8 +337,7 @@ protected:
         input.setBounds(kOutput.size());
         input.setEventSink(&manager);
         shell = std::make_unique<shell::Shell>(shell::ShellEnvironment {&compositor, &manager, &seat, nullptr});
-        wallpaper = shell->addComponent(
-                std::make_unique<shell::Wallpaper>(shell.get(), directory.filePath("cache")));
+        createWallpaper();
     }
 
     void TearDown() override
@@ -424,6 +430,50 @@ TEST_F(WallpaperTest, ANewPictureReplacesTheOldOnceDecodedAndJudged)
     render::setOpaqueBackdrop(std::nullopt);
     ui::Theme::setCurrent(ui::Theme::current());
     EXPECT_TRUE(node()->gradient());
+}
+
+TEST_F(WallpaperTest, WindowToneFollowsTheCommittedWallpaperAndWindowBounds)
+{
+    constexpr uint32_t warm = 0xffb14e38;
+    constexpr uint32_t cool = 0xff4e69c6;
+    ui::Bitmap image(kOutput.width(), kOutput.height(), ui::Bitmap::Format::Argb32Premultiplied);
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            image.setPixel(x, y, x < image.width() / 2 ? warm : cool);
+    const std::string path = directory.filePath("two-colours.png");
+    ASSERT_TRUE(image.savePng(path));
+
+    auto *window = openApplication({100, 200, 180, 160});
+    auto *surface = window->rootSurface();
+    EXPECT_EQ(ui::WallpaperTint{}, surface->wallpaperTint());
+    showPicture(path);
+    ASSERT_TRUE(test::runUntil([&] { return wallpaper->isReady(); }, std::chrono::seconds(10)));
+    EXPECT_EQ(ui::WallpaperTint::fromSample(0xb1, 0x4e, 0x38), surface->wallpaperTint());
+    openApplication({100, 200, 180, 160}); // Occlusion is not part of the sample.
+    EXPECT_EQ(ui::WallpaperTint::fromSample(0xb1, 0x4e, 0x38), surface->wallpaperTint());
+    window->setBounds({1100, 200, 180, 160});
+    EXPECT_EQ(ui::WallpaperTint::fromSample(0x4e, 0x69, 0xc6), surface->wallpaperTint());
+
+    shell::Wallpaper::Background background;
+    background.type = 1;
+    background.color = ui::Color::rgb(0x307090);
+    wallpaper->setBackground(background);
+    EXPECT_EQ(ui::WallpaperTint::fromSample(0x30, 0x70, 0x90), surface->wallpaperTint());
+    window->setRole(wm::WindowRole::Panel);
+    EXPECT_EQ(ui::WallpaperTint{}, surface->wallpaperTint());
+}
+
+TEST(TintFieldTest, SmoothlyBlendsWallpaperAcrossOutputSeams)
+{
+    const base::Rect left(-1000, 0, 1000, 600);
+    const base::Rect right(0, 0, 1000, 600);
+    const base::Rect window(-50, 200, 200, 150);
+    const auto warm = shell::TintField::solid(ui::Color::rgb(0xc88040));
+    const auto cool = shell::TintField::solid(ui::Color::rgb(0x4870c0));
+    shell::TintField::Sum sum;
+    sum.add(warm.sample(left, window), left.intersected(window).area());
+    sum.add(cool.sample(right, window), right.intersected(window).area());
+    EXPECT_EQ(sum.tone(), ui::WallpaperTint::fromSample(104, 116, 160));
 }
 
 TEST_F(WallpaperTest, AnUnreadablePictureKeepsWhatIsUp)

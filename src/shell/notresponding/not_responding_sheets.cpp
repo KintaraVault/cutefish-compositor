@@ -18,6 +18,7 @@
 #include "ui/icon.h"
 #include "ui/keys.h"
 #include "ui/label.h"
+#include "ui/color_provider.h"
 #include "ui/painter.h"
 #include "ui/theme.h"
 #include "wm/shell_surface.h"
@@ -125,7 +126,7 @@ void NotRespondingView::paint(ui::Painter &painter)
         applyTheme();
     // Opaque, as a dialog is; the compositor clips the corners and draws the
     // outline and the shadow.
-    painter.fillRect(localRect(), ui::Theme::current().secondBackground);
+    painter.fillRect(localRect(), ui::color(ui::ColorId::PanelBackground));
 }
 
 NotRespondingSheets::NotRespondingSheets(Shell *shell)

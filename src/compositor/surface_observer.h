@@ -44,6 +44,7 @@ public:
     virtual void onSurfaceMenuChanged(Surface* surface) { }
 
     virtual void onSurfaceWindowHintsChanged(Surface* surface) { }
+    virtual void onSurfaceWallpaperTintChanged(Surface* surface) { }
 
     // Validate cached state immediately before hierarchy application.
     virtual bool onSurfaceStateApplying(Surface* surface) { return true; }

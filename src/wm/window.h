@@ -435,6 +435,7 @@ public:
     // The client committed; whatever it now has on screen is presentedBounds().
     void onSurfaceCommit(compositor::Surface *surface) override;
     void onSurfaceWindowHintsChanged(compositor::Surface *surface) override;
+    void onSurfaceWallpaperTintChanged(compositor::Surface *surface) override;
 
     void addObserver(WindowObserver *observer);
     void removeObserver(WindowObserver *observer);

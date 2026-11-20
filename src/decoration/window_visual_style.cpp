@@ -41,6 +41,8 @@ constexpr render::Color kAccentColors[] = {
     {202 / 255.f, 100 / 255.f, 172 / 255.f, 1}, // Pink
     {254 / 255.f, 160 / 255.f, 66 / 255.f, 1}, // Orange
     {79 / 255.f, 89 / 255.f, 107 / 255.f, 1}, // Grey
+    {191 / 255.f, 131 / 255.f, 0, 1}, // Yellow
+    {101 / 255.f, 118 / 255.f, 189 / 255.f, 1}, // Indigo
 };
 
 // Ash's phantom window: kColorAshPhantomWindowBackgroundColor is the primary

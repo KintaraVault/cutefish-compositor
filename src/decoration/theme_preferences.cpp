@@ -63,7 +63,8 @@ void ThemePreferences::reload()
     setDarkMode(m_settings.boolValue("Appearance/DarkMode", false));
     setContinuousCorners(m_settings.boolValue("Appearance/ContinuousCorners", true));
     setReduceTransparency(m_settings.boolValue("Appearance/ReduceTransparency", false));
-    setColoredWindowControls(m_settings.boolValue("Appearance/ColoredWindowControls", false));
+    setColoredWindowControls(m_settings.boolValue(
+        std::string("Appearance/") + ui::window_controls::kColoredPreference, true));
     setAccentColor(int(m_settings.intValue("Appearance/AccentColor", 0)));
     setCaptionPointSize(m_settings.doubleValue("Appearance/FontSize", 9));
 }

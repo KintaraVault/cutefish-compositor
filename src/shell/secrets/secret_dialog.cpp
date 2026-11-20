@@ -17,6 +17,7 @@
 #include "ui/embedded_window.h"
 #include "ui/keys.h"
 #include "ui/label.h"
+#include "ui/color_provider.h"
 #include "ui/painter.h"
 #include "ui/theme.h"
 #include "wm/shell_surface.h"
@@ -74,7 +75,7 @@ protected:
 
     void paint(ui::Painter &painter) override
     {
-        painter.fillRect(localRect(), ui::Theme::current().secondBackground);
+        painter.fillRect(localRect(), ui::color(ui::ColorId::PanelBackground));
     }
 
     void pointerPress(const ui::PointerEvent &event) override

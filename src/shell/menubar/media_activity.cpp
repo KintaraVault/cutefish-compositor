@@ -26,7 +26,7 @@
 
 namespace cutefish::shell {
 
-static constexpr int kCardWidth = 296;
+static constexpr int kCardWidth = 286;
 static constexpr int kCardHeight = 160;
 static constexpr int kCardRadius = 24;
 static constexpr int kGap = 3;
@@ -38,6 +38,7 @@ MediaActivity::MediaActivity(Shell &shell, ShellWindow &bar, MprisManager &playe
     setTracksHover(true);
     setVisible(false);
     m_cover = addChild<MediaCover>(MediaCover::Style::Activity);
+    m_cover->onAccentChanged = [this] { requestPaint(); };
     m_currentChanged = players.currentChanged.connect([this] { refresh(); });
     m_playerChanged = players.currentPlayerChanged.connect([this] { refresh(); });
     refresh();
@@ -168,7 +169,8 @@ void MediaActivity::paint(ui::Painter &painter)
     if (open < .98) {
         painter.save();
         painter.multiplyOpacity(m_visibility * (1 - open));
-        paintLiveMediaWave(painter, {x + width - 25 * scale, y + 5 * scale, 18 * scale, 14 * scale}, m_bands);
+        paintLiveMediaWave(painter, {x + width - 25 * scale, y + 5 * scale, 18 * scale, 14 * scale},
+                           m_bands, m_cover->accentColor());
         painter.restore();
     }
 }

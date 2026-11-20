@@ -177,6 +177,8 @@ public:
     ~MediaCover() override;
     void setStyle(Style style);
     void setUrl(const std::string &url);
+    ui::Color accentColor() const { return m_accent; }
+    std::function<void()> onAccentChanged;
 
 protected:
     void layout() override;
@@ -184,6 +186,7 @@ protected:
 
 private:
     void animate();
+    void loadAccent(const std::string &path);
 
     Style m_style;
     ui::ImageView *m_image;
@@ -193,6 +196,8 @@ private:
     std::string m_url;
     std::shared_ptr<base::file::TemporaryFile> m_file;
     std::shared_ptr<int> m_request;
+    std::shared_ptr<int> m_paletteRequest;
+    ui::Color m_accent = ui::Color::rgb(0xcbd0d5);
     std::unique_ptr<ui::Animation> m_animation;
 };
 
@@ -255,7 +260,7 @@ private:
     bool m_controlStyle = false;
 };
 
-void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, const MediaBands &bands);
+void paintLiveMediaWave(ui::Painter &painter, const ui::RectF &rect, const MediaBands &bands, ui::Color accent);
 void paintLiveMediaIcon(ui::Painter &painter, const ui::RectF &rect, double opacity = 1);
 
 // The applications behind the bar's privacy dot, with one compact row per app.

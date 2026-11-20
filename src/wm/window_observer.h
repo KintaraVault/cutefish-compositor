@@ -19,6 +19,8 @@ public:
     virtual ~WindowObserver() = default;
 
     virtual void onWindowBoundsChanged(Window* window, const base::Rect& oldBounds) { }
+    virtual void onWindowRoleChanged(Window* window) { }
+    virtual void onWindowWallpaperTintChanged(Window* window) { }
     virtual void onWindowStateTypeChanged(Window* window, WindowStateType oldType) { }
     virtual void onWindowActivationChanged(Window* window, bool active) { }
     virtual void onWindowResizingChanged(Window* window, bool resizing) { }

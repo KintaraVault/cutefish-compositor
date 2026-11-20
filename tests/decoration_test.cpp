@@ -677,11 +677,11 @@ TEST_F(DecorationTest, ColoredWindowControlsSitCloser)
     ShellSurface *shell = makeToplevel(base::Size(400, 300));
     decoration::Decoration *frame = frameOf(shell->window());
     const auto gap = [frame] { return frame->buttons()[1].geometry().left() - frame->buttons()[0].geometry().right(); };
-    EXPECT_EQ(int(ui::window_controls::kSpacing), gap());
-    theme.setColoredWindowControls(true);
     EXPECT_EQ(int(ui::window_controls::kColoredSpacing), gap());
     theme.setColoredWindowControls(false);
     EXPECT_EQ(int(ui::window_controls::kSpacing), gap());
+    theme.setColoredWindowControls(true);
+    EXPECT_EQ(int(ui::window_controls::kColoredSpacing), gap());
 }
 
 TEST_F(DecorationTest, TheDebugBoundsAreTheFrameInOutputCoordinates)

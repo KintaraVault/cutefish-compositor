@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "compositor/surface.h"
 #include "decoration/caption_button.h"
 #include "decoration/decoration.h"
 #include "decoration/decoration_theme.h"
@@ -77,7 +78,16 @@ void DecorationNode::paint(render::Renderer& renderer, const base::Rect& geometr
 void DecorationNode::paintFrame(render::Renderer& renderer, const base::Rect& bounds) const
 {
     const auto insets = m_decoration->window()->frameInsets();
-    const auto& color = m_theme->palette().titleBar;
+    auto color = m_theme->palette().titleBar;
+    if (const auto* surface = m_decoration->window()->rootSurface()) {
+        const auto tone = surface->wallpaperTint().forMode(m_theme->darkMode());
+        if (tone != ui::WallpaperTint::neutral) {
+            const ui::Color base{uint8_t(std::lround(color.r * 255)), uint8_t(std::lround(color.g * 255)),
+                                 uint8_t(std::lround(color.b * 255)), 255};
+            const ui::Color tint = ui::WallpaperTint::apply(base, tone);
+            color = {tint.r / 255.0f, tint.g / 255.0f, tint.b / 255.0f, color.a};
+        }
+    }
     auto frameColor = m_decoration->isActive()
         ? m_theme->visualStyle().activeOutline : m_theme->visualStyle().inactiveOutline;
     frameColor.a = 1;

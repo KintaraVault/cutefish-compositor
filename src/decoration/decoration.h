@@ -73,6 +73,7 @@ public:
     void cancelPress() override;
     base::Rect titleBarBounds() const override;
     std::vector<base::Rect> captionButtonBounds() const override;
+    void onWindowWallpaperTintChanged(wm::Window *window) override;
     bool onTouchDown(input::Timestamp timestamp, int32_t id, const base::PointF& location) override;
     bool onTouchMotion(input::Timestamp timestamp, int32_t id, const base::PointF& location) override;
     bool onTouchUp(input::Timestamp timestamp, int32_t id) override;
