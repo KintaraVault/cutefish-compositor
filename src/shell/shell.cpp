@@ -44,16 +44,21 @@ public:
         , m_settingsPath(settingsPath.empty() ? preferencesFile("services") : settingsPath)
     {
         const base::Settings settings(m_settingsPath);
-        m_iconTheme = settings.stringValue("Appearance/IconTheme", "Cutefish");
-        m_fontFamily = settings.stringValue("Appearance/Font", "");
+        readIcons(settings);
+        m_fontFamily = settings.stringValue("Appearance/Font", ui::Theme::kDefaultFontFamily);
         m_fontPointSize = settings.doubleValue("Appearance/FontSize", 9);
         if (bus) {
             m_appearance = base::dbus::Proxy(bus, "org.cutefish.Services",
                                              "/org/cutefish/Services/Appearance",
                                              "org.cutefish.Services.Appearance");
             // The service writes services.conf before it signals.
-            m_iconThemeChanged = m_appearance.onSignal(
-                    "iconThemeChanged", [this](const base::dbus::Message &) { reloadIconTheme(); });
+            for (const char *signal : {"iconThemeChanged", "iconStyleChanged", "iconToneChanged",
+                                       "iconTintChanged", "glassStrengthChanged", "reduceTransparencyChanged"})
+                m_appearanceMatches.push_back(m_appearance.onSignal(
+                    signal, [this](const base::dbus::Message &) {
+                        if (readIcons(base::Settings(m_settingsPath)))
+                            apply();
+                    }));
         }
         if (m_theme)
             m_theme->addObserver(this);
@@ -69,14 +74,20 @@ public:
     void onThemeChanged() override { apply(); }
 
 private:
-    void reloadIconTheme()
+    bool readIcons(const base::Settings &settings)
     {
-        const base::Settings settings(m_settingsPath);
-        std::string iconTheme = settings.stringValue("Appearance/IconTheme", "Cutefish");
-        if (iconTheme == m_iconTheme)
-            return;
-        m_iconTheme = std::move(iconTheme);
-        apply();
+        const auto iconTheme = settings.stringValue("Appearance/IconTheme", "Cutefish");
+        ui::AppearanceStyle style;
+        style.icons = ui::appearance_style::iconStyle(settings.intValue("Appearance/IconStyle", 0));
+        style.tone = ui::appearance_style::iconTone(settings.intValue("Appearance/IconTone", 2));
+        style.tintColor = ui::appearance_style::colorIndex(settings.intValue("Appearance/IconTint", 0));
+        style.glass = ui::appearance_style::glassValue(settings.doubleValue("Appearance/GlassStrength", .5));
+        style.reduceTransparency = settings.boolValue("Appearance/ReduceTransparency", false);
+        if (m_iconTheme == iconTheme && m_style == style)
+            return false;
+        m_iconTheme = iconTheme;
+        m_style = style;
+        return true;
     }
 
     void apply()
@@ -89,13 +100,14 @@ private:
         theme.fontFamily = m_fontFamily;
         theme.fontPointSize = m_fontPointSize > 0 ? m_fontPointSize : 9;
         theme.continuousCorners = ui::Theme::current().continuousCorners;
-        ui::Theme::setCurrent(theme);
+        ui::Theme::setCurrent(theme, m_style);
     }
 
     decoration::Theme *m_theme;
     std::string m_settingsPath;
     base::dbus::Proxy m_appearance;
-    base::dbus::Match m_iconThemeChanged;
+    std::vector<base::dbus::Match> m_appearanceMatches;
+    ui::AppearanceStyle m_style;
     std::string m_iconTheme;
     std::string m_fontFamily;
     double m_fontPointSize = 9;

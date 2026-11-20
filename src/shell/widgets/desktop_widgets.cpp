@@ -33,6 +33,7 @@
 #include "ui/popup_glass.h"
 #include "ui/search_field.h"
 #include "ui/text_field.h"
+#include "ui/theme.h"
 #include <unicode/unistr.h>
 #include <unicode/timezone.h>
 
@@ -258,6 +259,23 @@ public:
 
     static void artwork(ui::Painter &painter, ui::RectF rect, Kind kind, Size size, int charge, bool discharging,
                         const Widget *item = nullptr)
+    {
+        const auto& style = ui::Theme::appearanceStyle();
+        const auto& theme = ui::Theme::current();
+        const bool toned = style.icons == ui::IconStyle::Tinted || style.icons == ui::IconStyle::Clear;
+        if (toned) {
+            const auto ramp = ui::appearance_style::layers(style, theme.darkMode, theme.background, theme.highlight);
+            const bool tinted = style.icons == ui::IconStyle::Tinted;
+            painter.saveToneLayer(rect, tinted ? ramp.bottom : ui::Color::rgb(0x47474b),
+                                  tinted ? ramp.ink : ui::Color::rgb(0xf2f3f5));
+        }
+        paintArtwork(painter, rect, kind, size, charge, discharging, item);
+        if (toned)
+            painter.restore();
+    }
+
+    static void paintArtwork(ui::Painter &painter, ui::RectF rect, Kind kind, Size size, int charge, bool discharging,
+                             const Widget *item)
     {
         const auto tm = localTime();
         const bool wide = size != Size::Small;
