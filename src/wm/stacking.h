@@ -17,7 +17,12 @@ class Window;
 //
 // Bottom to top:
 //
-//   Desktop < DesktopWidget < Normal applications < AlwaysOnTop < DesktopPopup < Panel < Launchpad < Dock < Notification < Osd < Capture
+//   Desktop < DesktopWidget < Normal applications < AlwaysOnTop < DesktopPopup < Panel
+//   < Launchpad < Dock < AboveDock < DockOverlay < Notification < Osd < Picker < Capture
+//
+// AboveDock holds application windows the client asked to keep above the
+// dock, such as a status item's panel. DockOverlay keeps shell controls
+// (such as the Control Center editor) above these application windows.
 //
 // Osd is the level a volume or brightness key shows, which must not hide
 // behind a banner that happens to be up.
@@ -36,6 +41,7 @@ enum class StackingLayer {
     Panel,
     Launchpad,
     Dock,
+    AboveDock,
     DockOverlay,
     Notification,
     Osd,

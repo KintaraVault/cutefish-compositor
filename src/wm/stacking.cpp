@@ -52,13 +52,17 @@ StackingLayer layerFor(const Window *window)
         return parentLayer == StackingLayer::Desktop || parentLayer == StackingLayer::DesktopWidget
                 ? StackingLayer::DesktopPopup : parentLayer;
     }
+    if (window->isAboveDock() && window->role() == WindowRole::Normal)
+        return StackingLayer::AboveDock;
     if (window->isAlwaysOnTop() && window->role() == WindowRole::Normal)
         return StackingLayer::AlwaysOnTop;
     // A dialog stays with the window it belongs to, as transient children
     // share their parent's container in ash.
-    if (window->role() == WindowRole::Normal && window->transientParent()
-        && layerFor(window->transientParent()) == StackingLayer::AlwaysOnTop)
-        return StackingLayer::AlwaysOnTop;
+    if (window->role() == WindowRole::Normal && window->transientParent()) {
+        const StackingLayer parentLayer = layerFor(window->transientParent());
+        if (parentLayer == StackingLayer::AlwaysOnTop || parentLayer == StackingLayer::AboveDock)
+            return parentLayer;
+    }
     return layerFor(window->role(), window->panelBehavior());
 }
 
